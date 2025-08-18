@@ -50,7 +50,8 @@
     "@point-of-sale/codepage-encoder": "^3.0.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "receipt-printer-encoder.d.ts"
   ],
-  "types": "src/receipt-printer-encoder.d.ts"
+  "types": "receipt-printer-encoder.d.ts"
 }
