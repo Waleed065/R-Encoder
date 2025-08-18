@@ -63,7 +63,7 @@ export default class ReceiptPrinterEncoder {
   pulse(device?: number, on?: number, off?: number): this;
   raw(data: any[]): this;
   commands(): any[];
-  encode(format?: "commands" | "lines" | "array"): Uint8Array | any[];
+  encode(format?: "commands" | "lines" | "array"): Uint8Array | string;
   readonly columns: number;
   readonly language: string;
   readonly printerCapabilities: object;
