@@ -51,5 +51,6 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "types": "src/receipt-printer-encoder.d.ts"
 }
