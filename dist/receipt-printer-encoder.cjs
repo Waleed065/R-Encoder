@@ -1,10 +1,6 @@
 'use strict';
 
-var Dither = require('canvas-dither');
-var Flatten = require('canvas-flatten');
 var CodepageEncoder = require('@point-of-sale/codepage-encoder');
-var ImageData = require('@canvas/image-data');
-var resizeImageData = require('resize-image-data');
 
 /**
  * ESC/POS Language commands
@@ -2088,8 +2084,8 @@ class ReceiptPrinterEncoder {
 
   #printerCapabilities = {
     'fonts': {
-      'A': {size: '12x24', columns: 42},
-      'B': {size: '9x24', columns: 56},
+      'A': { size: '12x24', columns: 42 },
+      'B': { size: '9x24', columns: 56 },
     },
     'barcodes': {
       'supported': true,
@@ -2207,7 +2203,7 @@ class ReceiptPrinterEncoder {
     */
 
     if (typeof this.#options.autoFlush === 'undefined') {
-      this.#options.autoFlush = ! this.#options.embedded && this.#options.language == 'star-prnt';
+      this.#options.autoFlush = !this.#options.embedded && this.#options.language == 'star-prnt';
     }
 
     /* Check column width */
@@ -2224,8 +2220,8 @@ class ReceiptPrinterEncoder {
       }
 
       this.#codepageMapping = Object.fromEntries(codepageMappings[this.#options.language][this.#options.codepageMapping]
-          .map((v, i) => [v, i])
-          .filter((i) => i));
+        .map((v, i) => [v, i])
+        .filter((i) => i));
     } else {
       this.#codepageMapping = this.#options.codepageMapping;
     }
@@ -2272,7 +2268,7 @@ class ReceiptPrinterEncoder {
     }
 
     this.#composer.add(
-        this.#language.initialize(),
+      this.#language.initialize(),
     );
 
     return this;
@@ -2328,7 +2324,7 @@ class ReceiptPrinterEncoder {
     value = parseInt(value, 10) || 1;
 
     for (let i = 0; i < value; i++) {
-      this.#composer.flush({forceNewline: true});
+      this.#composer.flush({ forceNewline: true });
     }
 
     return this;
@@ -2357,7 +2353,7 @@ class ReceiptPrinterEncoder {
      */
   underline(value) {
     if (typeof value === 'undefined') {
-      this.#composer.style.underline = ! this.#composer.style.underline;
+      this.#composer.style.underline = !this.#composer.style.underline;
     } else {
       this.#composer.style.underline = value;
     }
@@ -2374,7 +2370,7 @@ class ReceiptPrinterEncoder {
      */
   italic(value) {
     if (typeof value === 'undefined') {
-      this.#composer.style.italic = ! this.#composer.style.italic;
+      this.#composer.style.italic = !this.#composer.style.italic;
     } else {
       this.#composer.style.italic = value;
     }
@@ -2391,7 +2387,7 @@ class ReceiptPrinterEncoder {
      */
   bold(value) {
     if (typeof value === 'undefined') {
-      this.#composer.style.bold = ! this.#composer.style.bold;
+      this.#composer.style.bold = !this.#composer.style.bold;
     } else {
       this.#composer.style.bold = value;
     }
@@ -2408,7 +2404,7 @@ class ReceiptPrinterEncoder {
      */
   invert(value) {
     if (typeof value === 'undefined') {
-      this.#composer.style.invert = ! this.#composer.style.invert;
+      this.#composer.style.invert = !this.#composer.style.invert;
     } else {
       this.#composer.style.invert = value;
     }
@@ -2526,7 +2522,7 @@ class ReceiptPrinterEncoder {
     /* Change the font */
 
     this.#composer.add(
-        this.#language.font(value),
+      this.#language.font(value),
     );
 
     this.#state.font = value;
@@ -2624,7 +2620,7 @@ class ReceiptPrinterEncoder {
             verticalAlign = columns[c].verticalAlign;
           }
 
-          const line = {commands: [{type: 'space', size: columns[c].width}], height: 1};
+          const line = { commands: [{ type: 'space', size: columns[c].width }], height: 1 };
 
           if (verticalAlign == 'bottom') {
             lines[c].unshift(line);
@@ -2674,7 +2670,7 @@ class ReceiptPrinterEncoder {
     this.#composer.flush();
 
     this.#composer.text((options.style === 'double' ? '═' : '─').repeat(options.width), 'cp437');
-    this.#composer.flush({forceNewline: true});
+    this.#composer.flush({ forceNewline: true });
 
     return this;
   }
@@ -2763,7 +2759,7 @@ class ReceiptPrinterEncoder {
 
       this.#composer.space(options.paddingLeft);
       this.#composer.add(lines[i].commands,
-          options.width - (options.style == 'none' ? 0 : 2) - options.paddingLeft - options.paddingRight);
+        options.width - (options.style == 'none' ? 0 : 2) - options.paddingLeft - options.paddingRight);
       this.#composer.space(options.paddingRight);
 
       if (options.style != 'none') {
@@ -2828,7 +2824,7 @@ class ReceiptPrinterEncoder {
 
     /* Force printing the print buffer and moving to a new line */
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     /* Set alignment */
 
@@ -2839,7 +2835,7 @@ class ReceiptPrinterEncoder {
     /* Barcode */
 
     this.#composer.add(
-        this.#language.barcode(value, symbology, options),
+      this.#language.barcode(value, symbology, options),
     );
 
     /* Reset alignment */
@@ -2848,7 +2844,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     return this;
   }
@@ -2901,7 +2897,7 @@ class ReceiptPrinterEncoder {
 
     /* Force printing the print buffer and moving to a new line */
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     /* Set alignment */
 
@@ -2912,7 +2908,7 @@ class ReceiptPrinterEncoder {
     /* QR code */
 
     this.#composer.add(
-        this.#language.qrcode(value, options),
+      this.#language.qrcode(value, options),
     );
 
     /* Reset alignment */
@@ -2921,7 +2917,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     return this;
   }
@@ -2961,7 +2957,7 @@ class ReceiptPrinterEncoder {
 
     /* Force printing the print buffer and moving to a new line */
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     /* Set alignment */
 
@@ -2972,7 +2968,7 @@ class ReceiptPrinterEncoder {
     /* PDF417 code */
 
     this.#composer.add(
-        this.#language.pdf417(value, options),
+      this.#language.pdf417(value, options),
     );
 
     /* Reset alignment */
@@ -2981,7 +2977,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     return this;
   }
@@ -2993,132 +2989,28 @@ class ReceiptPrinterEncoder {
      * @param  {object}         input  an element, like a canvas or image that needs to be printed
      * @param  {number}         width  width of the image on the printer
      * @param  {number}         height  height of the image on the printer
-     * @param  {string}         algorithm  the dithering algorithm for making the image black and white
-     * @param  {number}         threshold  threshold for the dithering algorithm
      * @return {object}                  Return the object, for easy chaining commands
      *
      */
-  image(input, width, height, algorithm, threshold) {
+  image(input, width, height) {
     if (this.#options.embedded) {
       throw new Error('Images are not supported in table cells or boxes');
     }
 
-    if (width % 8 !== 0) {
-      throw new Error('Width must be a multiple of 8');
-    }
+    // if (width % 8 !== 0) {
+    //   throw new Error('Width must be a multiple of 8');
+    // }
 
-    if (height % 8 !== 0) {
-      throw new Error('Height must be a multiple of 8');
-    }
+    // if (height % 8 !== 0) {
+    //   throw new Error('Height must be a multiple of 8');
+    // }
 
-    if (typeof algorithm === 'undefined') {
-      algorithm = 'threshold';
-    }
+    const image = {
+      ...input,
+      data: new Uint8ClampedArray(input.data)
+    };
 
-    if (typeof threshold === 'undefined') {
-      threshold = 128;
-    }
-
-    /* Determine the type of the input */
-
-    const name = input.constructor.name;
-    let type;
-
-    name.endsWith('Element') ? type = 'element' : null;
-    name == 'ImageData' ? type = 'imagedata' : null;
-    name == 'Canvas' && typeof input.getContext !== 'undefined' ? type = 'node-canvas' : null;
-    name == 'Image' ? type = 'node-canvas-image' : null;
-    name == 'Image' && typeof input.frames !== 'undefined' ? type = 'node-read-image' : null;
-    name == 'Object' && input.data && input.info ? type = 'node-sharp' : null;
-    name == 'View3duint8' && input.data && input.shape ? type = 'ndarray' : null;
-    name == 'Object' && input.data && input.width && input.height ? type = 'object' : null;
-
-    if (!type) {
-      throw new Error('Could not determine the type of image input');
-    }
-
-    /* Turn provided data into an ImageData object */
-
-    let image;
-
-    if (type == 'element') {
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d');
-      context.drawImage(input, 0, 0, width, height);
-      image = context.getImageData(0, 0, width, height);
-    }
-
-    if (type == 'node-canvas') {
-      const context = input.getContext('2d');
-      image = context.getImageData(0, 0, input.width, input.height);
-    }
-
-    if (type == 'node-canvas-image') {
-      if (typeof this.#options.createCanvas !== 'function') {
-        throw new Error('Canvas is not supported in this environment, specify a createCanvas function in the options');
-      }
-
-      const canvas = this.#options.createCanvas(width, height);
-      const context = canvas.getContext('2d');
-      context.drawImage(input, 0, 0, width, height);
-      image = context.getImageData(0, 0, width, height);
-    }
-
-    if (type == 'node-read-image') {
-      image = new ImageData(input.width, input.height);
-      image.data.set(input.frames[0].data);
-    }
-
-    if (type == 'node-sharp') {
-      image = new ImageData(input.info.width, input.info.height);
-      image.data.set(input.data);
-    }
-
-    if (type == 'ndarray') {
-      image = new ImageData(input.shape[0], input.shape[1]);
-      image.data.set(input.data);
-    }
-
-    if (type == 'object') {
-      image = new ImageData(input.width, input.height);
-      image.data.set(input.data);
-    }
-
-    if (type == 'imagedata') {
-      image = input;
-    }
-
-    if (!image) {
-      throw new Error('Image could not be loaded');
-    }
-
-    /* Resize image */
-
-    if (width !== image.width || height !== image.height) {
-      image = resizeImageData(image, width, height, 'bilinear-interpolation');
-    }
-
-    /* Check if the image has the correct dimensions */
-
-    if (width !== image.width || height !== image.height) {
-      throw new Error('Image could not be resized');
-    }
-
-    /* Flatten the image and dither it */
-
-    image = Flatten.flatten(image, [0xff, 0xff, 0xff]);
-
-    switch (algorithm) {
-      case 'threshold': image = Dither.threshold(image, threshold); break;
-      case 'bayer': image = Dither.bayer(image, threshold); break;
-      case 'floydsteinberg': image = Dither.floydsteinberg(image); break;
-      case 'atkinson': image = Dither.atkinson(image); break;
-    }
-
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     /* Set alignment */
 
@@ -3129,7 +3021,7 @@ class ReceiptPrinterEncoder {
     /* Encode the image data */
 
     this.#composer.add(
-        this.#language.image(image, width, height, this.#options.imageMode),
+      this.#language.image(image, width, height, this.#options.imageMode),
     );
 
     /* Reset alignment */
@@ -3138,7 +3030,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     return this;
   }
@@ -3156,16 +3048,16 @@ class ReceiptPrinterEncoder {
     }
 
     for (let i = 0; i < this.#options.feedBeforeCut; i++) {
-      this.#composer.flush({forceNewline: true});
+      this.#composer.flush({ forceNewline: true });
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     this.#composer.add(
-        this.#language.cut(value),
+      this.#language.cut(value),
     );
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     return this;
   }
@@ -3184,13 +3076,13 @@ class ReceiptPrinterEncoder {
       throw new Error('Pulse is not supported in table cells or boxes');
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     this.#composer.add(
-        this.#language.pulse(device, on, off),
+      this.#language.pulse(device, on, off),
     );
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
     return this;
   }
@@ -3247,7 +3139,7 @@ class ReceiptPrinterEncoder {
       const fragment = CodepageEncoder.encode(value, 'ascii');
 
       return [
-        {type: 'text', payload: [...fragment]},
+        { type: 'text', payload: [...fragment] },
       ];
     }
 
@@ -3258,13 +3150,13 @@ class ReceiptPrinterEncoder {
         this.#state.codepage = this.#codepageMapping[codepage];
 
         return [
-          {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[codepage])},
-          {type: 'text', payload: [...fragment]},
+          { type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[codepage]) },
+          { type: 'text', payload: [...fragment] },
         ];
       }
 
       return [
-        {type: 'text', payload: [...fragment]},
+        { type: 'text', payload: [...fragment] },
       ];
     }
 
@@ -3274,8 +3166,8 @@ class ReceiptPrinterEncoder {
     for (const fragment of fragments) {
       this.#state.codepage = this.#codepageMapping[fragment.codepage];
       buffer.push(
-          {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage])},
-          {type: 'text', payload: [...fragment.bytes]},
+        { type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage]) },
+        { type: 'text', payload: [...fragment.bytes] },
       );
     }
 
@@ -3293,11 +3185,11 @@ class ReceiptPrinterEncoder {
     /* Determine if the last command is a pulse or cut, the we do not need a flush */
 
     let lastLine = this.#queue[this.#queue.length - 1];
-  
+
     if (lastLine) {
       let lastCommand = lastLine[lastLine.length - 1];
 
-      if (lastCommand && [ 'pulse', 'cut' ].includes(lastCommand.type)) {
+      if (lastCommand && ['pulse', 'cut'].includes(lastCommand.type)) {
         requiresFlush = false;
       }
     }
@@ -3306,7 +3198,7 @@ class ReceiptPrinterEncoder {
 
     if (requiresFlush && this.#options.autoFlush && !this.#options.embedded) {
       this.#composer.add(
-          this.#language.flush(),
+        this.#language.flush(),
       );
     }
 
@@ -3314,7 +3206,7 @@ class ReceiptPrinterEncoder {
 
     const result = [];
 
-    const remaining = this.#composer.fetch({forceFlush: true, ignoreAlignment: true});
+    const remaining = this.#composer.fetch({ forceFlush: true, ignoreAlignment: true });
 
     if (remaining.length) {
       this.#queue.push(remaining);
@@ -3325,9 +3217,9 @@ class ReceiptPrinterEncoder {
     while (this.#queue.length) {
       const line = this.#queue.shift();
       const height = line
-          .filter((i) => i.type === 'style' && i.property === 'size')
-          .map((i) => i.value.height)
-          .reduce((a, b) => Math.max(a, b), 1);
+        .filter((i) => i.type === 'style' && i.property === 'size')
+        .map((i) => i.value.height)
+        .reduce((a, b) => Math.max(a, b), 1);
 
       if (this.#options.debug) {
         console.log('|' + line.filter((i) => i.type === 'text').map((i) => i.value).join('') + '|', height);
@@ -3375,7 +3267,7 @@ class ReceiptPrinterEncoder {
         if (item.type === 'text') {
           buffer.push(...this.#encodeText(item.value, item.codepage));
         } else if (item.type === 'style') {
-          buffer.push(Object.assign(item, {payload: this.#encodeStyle(item.property, item.value)}));
+          buffer.push(Object.assign(item, { payload: this.#encodeStyle(item.property, item.value) }));
         } else if (item.value || item.payload) {
           buffer.push(item);
         }
@@ -3442,7 +3334,7 @@ class ReceiptPrinterEncoder {
    * @return {object}         An object with all supported printer models
    */
   static get printerModels() {
-    return Object.entries(printerDefinitions).map((i) => ({id: i[0], name: i[1].vendor + ' ' + i[1].model}));
+    return Object.entries(printerDefinitions).map((i) => ({ id: i[0], name: i[1].vendor + ' ' + i[1].model }));
   }
 
   /**

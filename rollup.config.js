@@ -1,5 +1,5 @@
-import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
+import resolve from '@rollup/plugin-node-resolve';
 import terser from '@rollup/plugin-terser';
 
 export default [
@@ -14,31 +14,31 @@ export default [
 			format: 'umd'
 		},
 		plugins: [
-			resolve({ browser: true }), 
+			resolve({ browser: true }),
 			commonjs(),
-            terser()
+			terser()
 		]
 	},
 
 	// Browser-friendly ES module build
 	{
 		input: 'src/receipt-printer-encoder.js',
-		output: { 
-			file: 'dist/receipt-printer-encoder.esm.js', 
+		output: {
+			file: 'dist/receipt-printer-encoder.esm.js',
 			sourcemap: true,
-			format: 'es' 
+			format: 'es'
 		},
 		plugins: [
-			resolve({ browser: true }), 
+			resolve({ browser: true }),
 			commonjs(),
-            terser()
+			terser()
 		]
 	},
 
-    // CommonJS (for Node) and ES module (for bundlers) build
-    {
+	// CommonJS (for Node) and ES module (for bundlers) build
+	{
 		input: 'src/receipt-printer-encoder.js',
-		external: ['@canvas/image-data', 'canvas-dither', 'canvas-flatten', 'resize-image-data', '@point-of-sale/codepage-encoder'],
+		external: ['@point-of-sale/codepage-encoder'],
 		output: [
 			{ file: 'dist/receipt-printer-encoder.cjs', format: 'cjs' },
 			{ file: 'dist/receipt-printer-encoder.mjs', format: 'es' }
