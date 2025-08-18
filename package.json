@@ -7,10 +7,12 @@
     "browser": {
       "import": "./dist/receipt-printer-encoder.esm.js",
       "require": "./dist/receipt-printer-encoder.umd.js",
-      "script": "./dist/receipt-printer-encoder.umd.js"
+      "script": "./dist/receipt-printer-encoder.umd.js",
+      "types": "./receipt-printer-encoder.d.ts"
     },
     "import": "./dist/receipt-printer-encoder.mjs",
-    "require": "./dist/receipt-printer-encoder.cjs"
+    "require": "./dist/receipt-printer-encoder.cjs",
+    "types": "./receipt-printer-encoder.d.ts"
   },
   "main": "dist/receipt-printer-encoder.cjs",
   "module": "dist/receipt-printer-encoder.mjs",
