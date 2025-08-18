@@ -796,18 +796,18 @@ class LanguageStarPrnt {
     const identifier = typeof symbology === 'string' ? symbologies[symbology] : symbology;
 
     result.push(
-        {
-          type: 'barcode',
-          value: {symbology: symbology, data: value, width: options.width, height: options.height, text: options.text},
-          payload: [
-            0x1b, 0x62,
-            identifier,
-            options.text ? 0x02 : 0x01,
-            options.width,
-            options.height,
-            ...bytes, 0x1e,
-          ],
-        },
+      {
+        type: 'barcode',
+        value: { symbology: symbology, data: value, width: options.width, height: options.height, text: options.text },
+        payload: [
+          0x1b, 0x62,
+          identifier,
+          options.text ? 0x02 : 0x01,
+          options.width,
+          options.height,
+          ...bytes, 0x1e,
+        ],
+      },
     );
 
     return result;
@@ -831,12 +831,12 @@ class LanguageStarPrnt {
 
     if (options.model in models) {
       result.push(
-          {
-            type: 'qrcode',
-            property: 'model',
-            value: options.model,
-            payload: [0x1b, 0x1d, 0x79, 0x53, 0x30, models[options.model]],
-          },
+        {
+          type: 'qrcode',
+          property: 'model',
+          value: options.model,
+          payload: [0x1b, 0x1d, 0x79, 0x53, 0x30, models[options.model]],
+        },
       );
     } else {
       throw new Error('Model must be 1 or 2');
@@ -853,12 +853,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-        {
-          type: 'qrcode',
-          property: 'size',
-          value: options.size,
-          payload: [0x1b, 0x1d, 0x79, 0x53, 0x32, options.size],
-        },
+      {
+        type: 'qrcode',
+        property: 'size',
+        value: options.size,
+        payload: [0x1b, 0x1d, 0x79, 0x53, 0x32, options.size],
+      },
     );
 
     /* Error level */
@@ -872,12 +872,12 @@ class LanguageStarPrnt {
 
     if (options.errorlevel in errorlevels) {
       result.push(
-          {
-            type: 'qrcode',
-            property: 'errorlevel',
-            value: options.errorlevel,
-            payload: [0x1b, 0x1d, 0x79, 0x53, 0x31, errorlevels[options.errorlevel]],
-          },
+        {
+          type: 'qrcode',
+          property: 'errorlevel',
+          value: options.errorlevel,
+          payload: [0x1b, 0x1d, 0x79, 0x53, 0x31, errorlevels[options.errorlevel]],
+        },
       );
     } else {
       throw new Error('Error level must be l, m, q or h');
@@ -889,26 +889,26 @@ class LanguageStarPrnt {
     const length = bytes.length;
 
     result.push(
-        {
-          type: 'qrcode',
-          property: 'data',
-          value,
-          payload: [
-            0x1b, 0x1d, 0x79, 0x44, 0x31, 0x00,
-            length & 0xff, (length >> 8) & 0xff,
-            ...bytes,
-          ],
-        },
+      {
+        type: 'qrcode',
+        property: 'data',
+        value,
+        payload: [
+          0x1b, 0x1d, 0x79, 0x44, 0x31, 0x00,
+          length & 0xff, (length >> 8) & 0xff,
+          ...bytes,
+        ],
+      },
     );
 
     /* Print QR code */
 
     result.push(
-        {
-          type: 'qrcode',
-          command: 'print',
-          payload: [0x1b, 0x1d, 0x79, 0x50],
-        },
+      {
+        type: 'qrcode',
+        command: 'print',
+        payload: [0x1b, 0x1d, 0x79, 0x50],
+      },
     );
 
     return result;
@@ -942,11 +942,11 @@ class LanguageStarPrnt {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          value: `rows: ${options.rows}, columns: ${options.columns}`,
-          payload: [0x1b, 0x1d, 0x78, 0x53, 0x30, 0x01, options.rows, options.columns],
-        },
+      {
+        type: 'pdf417',
+        value: `rows: ${options.rows}, columns: ${options.columns}`,
+        payload: [0x1b, 0x1d, 0x78, 0x53, 0x30, 0x01, options.rows, options.columns],
+      },
     );
 
     /* Width */
@@ -960,12 +960,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'width',
-          value: options.width,
-          payload: [0x1b, 0x1d, 0x78, 0x53, 0x32, options.width],
-        },
+      {
+        type: 'pdf417',
+        property: 'width',
+        value: options.width,
+        payload: [0x1b, 0x1d, 0x78, 0x53, 0x32, options.width],
+      },
     );
 
     /* Height */
@@ -979,12 +979,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'height',
-          value: options.height,
-          payload: [0x1b, 0x1d, 0x78, 0x53, 0x33, options.height],
-        },
+      {
+        type: 'pdf417',
+        property: 'height',
+        value: options.height,
+        payload: [0x1b, 0x1d, 0x78, 0x53, 0x33, options.height],
+      },
     );
 
     /* Error level */
@@ -998,12 +998,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'errorlevel',
-          value: options.errorlevel,
-          payload: [0x1b, 0x1d, 0x78, 0x53, 0x31, options.errorlevel],
-        },
+      {
+        type: 'pdf417',
+        property: 'errorlevel',
+        value: options.errorlevel,
+        payload: [0x1b, 0x1d, 0x78, 0x53, 0x31, options.errorlevel],
+      },
     );
 
     /* Data */
@@ -1012,26 +1012,26 @@ class LanguageStarPrnt {
     const length = bytes.length;
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'data',
-          value,
-          payload: [
-            0x1b, 0x1d, 0x78, 0x44,
-            length & 0xff, (length >> 8) & 0xff,
-            ...bytes,
-          ],
-        },
+      {
+        type: 'pdf417',
+        property: 'data',
+        value,
+        payload: [
+          0x1b, 0x1d, 0x78, 0x44,
+          length & 0xff, (length >> 8) & 0xff,
+          ...bytes,
+        ],
+      },
     );
 
     /* Print PDF417 code */
 
     result.push(
-        {
-          type: 'pdf417',
-          command: 'print',
-          payload: [0x1b, 0x1d, 0x78, 0x50],
-        },
+      {
+        type: 'pdf417',
+        command: 'print',
+        payload: [0x1b, 0x1d, 0x78, 0x50],
+      },
     );
 
     return result;
@@ -1042,22 +1042,14 @@ class LanguageStarPrnt {
      * @param {ImageData} image     ImageData object
      * @param {number} width        Width of the image
      * @param {number} height       Height of the image
-     * @param {string} mode         Image encoding mode (value is ignored)
      * @return {Array}             Array of bytes to send to the printer
      */
-  image(image, width, height, mode) {
+  image(image, width, height) {
     const result = [];
 
     const getPixel = (x, y) => typeof image.data[((width * y) + x) * 4] === 'undefined' ||
-                                      image.data[((width * y) + x) * 4] > 0 ? 0 : 1;
+      image.data[((width * y) + x) * 4] > 0 ? 0 : 1;
 
-    result.push(
-        {
-          type: 'line-spacing',
-          value: '24 dots',
-          payload: [0x1b, 0x30],
-        },
-    );
 
     for (let s = 0; s < height / 24; s++) {
       const y = s * 24;
@@ -1067,60 +1059,52 @@ class LanguageStarPrnt {
         const i = x * 3;
 
         bytes[i] =
-                    getPixel(x, y + 0) << 7 |
-                    getPixel(x, y + 1) << 6 |
-                    getPixel(x, y + 2) << 5 |
-                    getPixel(x, y + 3) << 4 |
-                    getPixel(x, y + 4) << 3 |
-                    getPixel(x, y + 5) << 2 |
-                    getPixel(x, y + 6) << 1 |
-                    getPixel(x, y + 7);
+          getPixel(x, y + 0) << 7 |
+          getPixel(x, y + 1) << 6 |
+          getPixel(x, y + 2) << 5 |
+          getPixel(x, y + 3) << 4 |
+          getPixel(x, y + 4) << 3 |
+          getPixel(x, y + 5) << 2 |
+          getPixel(x, y + 6) << 1 |
+          getPixel(x, y + 7);
 
         bytes[i + 1] =
-                    getPixel(x, y + 8) << 7 |
-                    getPixel(x, y + 9) << 6 |
-                    getPixel(x, y + 10) << 5 |
-                    getPixel(x, y + 11) << 4 |
-                    getPixel(x, y + 12) << 3 |
-                    getPixel(x, y + 13) << 2 |
-                    getPixel(x, y + 14) << 1 |
-                    getPixel(x, y + 15);
+          getPixel(x, y + 8) << 7 |
+          getPixel(x, y + 9) << 6 |
+          getPixel(x, y + 10) << 5 |
+          getPixel(x, y + 11) << 4 |
+          getPixel(x, y + 12) << 3 |
+          getPixel(x, y + 13) << 2 |
+          getPixel(x, y + 14) << 1 |
+          getPixel(x, y + 15);
 
         bytes[i + 2] =
-                    getPixel(x, y + 16) << 7 |
-                    getPixel(x, y + 17) << 6 |
-                    getPixel(x, y + 18) << 5 |
-                    getPixel(x, y + 19) << 4 |
-                    getPixel(x, y + 20) << 3 |
-                    getPixel(x, y + 21) << 2 |
-                    getPixel(x, y + 22) << 1 |
-                    getPixel(x, y + 23);
+          getPixel(x, y + 16) << 7 |
+          getPixel(x, y + 17) << 6 |
+          getPixel(x, y + 18) << 5 |
+          getPixel(x, y + 19) << 4 |
+          getPixel(x, y + 20) << 3 |
+          getPixel(x, y + 21) << 2 |
+          getPixel(x, y + 22) << 1 |
+          getPixel(x, y + 23);
       }
 
       result.push(
-          {
-            type: 'image',
-            property: 'data',
-            value: 'column',
-            width,
-            height: 24,
-            payload: [
-              0x1b, 0x58,
-              width & 0xff, (width >> 8) & 0xff,
-              ...bytes,
-              0x0a, 0x0d,
-            ],
-          },
+        {
+          type: 'image',
+          property: 'data',
+          value: 'column',
+          width,
+          height: 24,
+          payload: [
+            0x1b, 0x58,
+            width & 0xff, (width >> 8) & 0xff,
+            ...bytes,
+            0x0a, 0x0d,
+          ],
+        },
       );
     }
-
-    result.push(
-        {
-          type: 'line-spacing',
-          value: 'default',
-          payload: [0x1b, 0x7a, 0x01],
-        },
-    );
 
     return result;
   }
