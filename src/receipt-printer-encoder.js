@@ -929,10 +929,10 @@ class ReceiptPrinterEncoder {
      * @param  {object}         input  an element, like a canvas or image that needs to be printed
      * @param  {number}         width  width of the image on the printer
      * @param  {number}         height  height of the image on the printer
-     * @return {object}                  Return the object, for easy chaining commands
+     * @return {Promise<object>}        Return a Promise that resolves to the object, for easy chaining commands
      *
      */
-  image(input, width, height) {
+  async image(input, width, height) {
     if (this.#options.embedded) {
       throw new Error('Images are not supported in table cells or boxes');
     }
@@ -963,12 +963,14 @@ class ReceiptPrinterEncoder {
 
     /* Encode the image data */
 
-    this.#composer.add(
-      this.#language.image(image, width, height, this.#options.imageMode),
-    );
+    const imageResult = this.#language.image(image, width, height, this.#options.imageMode);
+
+    // Wait for the result if it's a Promise (async processing for large images)
+    const encodedImage = await Promise.resolve(imageResult);
+
+    this.#composer.add(encodedImage);
 
     /* Reset alignment */
-
     if (this.#composer.align !== 'left') {
       this.#composer.add(this.#language.align('left'));
     }

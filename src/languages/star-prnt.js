@@ -361,7 +361,7 @@ class LanguageStarPrnt {
      * @param {ImageData} image     ImageData object
      * @param {number} width        Width of the image
      * @param {number} height       Height of the image
-     * @return {Array}             Array of bytes to send to the printer
+     * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
      */
   image(image, width, height) {
     const result = [];
@@ -369,63 +369,151 @@ class LanguageStarPrnt {
     const getPixel = (x, y) => typeof image.data[((width * y) + x) * 4] === 'undefined' ||
       image.data[((width * y) + x) * 4] > 0 ? 0 : 1;
 
+    const processImageSync = () => {
+      for (let s = 0; s < height / 24; s++) {
+        const y = s * 24;
+        const bytes = new Uint8Array(width * 3);
 
-    for (let s = 0; s < height / 24; s++) {
-      const y = s * 24;
-      const bytes = new Uint8Array(width * 3);
+        for (let x = 0; x < width; x++) {
+          const i = x * 3;
 
-      for (let x = 0; x < width; x++) {
-        const i = x * 3;
+          bytes[i] =
+            getPixel(x, y + 0) << 7 |
+            getPixel(x, y + 1) << 6 |
+            getPixel(x, y + 2) << 5 |
+            getPixel(x, y + 3) << 4 |
+            getPixel(x, y + 4) << 3 |
+            getPixel(x, y + 5) << 2 |
+            getPixel(x, y + 6) << 1 |
+            getPixel(x, y + 7);
 
-        bytes[i] =
-          getPixel(x, y + 0) << 7 |
-          getPixel(x, y + 1) << 6 |
-          getPixel(x, y + 2) << 5 |
-          getPixel(x, y + 3) << 4 |
-          getPixel(x, y + 4) << 3 |
-          getPixel(x, y + 5) << 2 |
-          getPixel(x, y + 6) << 1 |
-          getPixel(x, y + 7);
+          bytes[i + 1] =
+            getPixel(x, y + 8) << 7 |
+            getPixel(x, y + 9) << 6 |
+            getPixel(x, y + 10) << 5 |
+            getPixel(x, y + 11) << 4 |
+            getPixel(x, y + 12) << 3 |
+            getPixel(x, y + 13) << 2 |
+            getPixel(x, y + 14) << 1 |
+            getPixel(x, y + 15);
 
-        bytes[i + 1] =
-          getPixel(x, y + 8) << 7 |
-          getPixel(x, y + 9) << 6 |
-          getPixel(x, y + 10) << 5 |
-          getPixel(x, y + 11) << 4 |
-          getPixel(x, y + 12) << 3 |
-          getPixel(x, y + 13) << 2 |
-          getPixel(x, y + 14) << 1 |
-          getPixel(x, y + 15);
+          bytes[i + 2] =
+            getPixel(x, y + 16) << 7 |
+            getPixel(x, y + 17) << 6 |
+            getPixel(x, y + 18) << 5 |
+            getPixel(x, y + 19) << 4 |
+            getPixel(x, y + 20) << 3 |
+            getPixel(x, y + 21) << 2 |
+            getPixel(x, y + 22) << 1 |
+            getPixel(x, y + 23);
+        }
 
-        bytes[i + 2] =
-          getPixel(x, y + 16) << 7 |
-          getPixel(x, y + 17) << 6 |
-          getPixel(x, y + 18) << 5 |
-          getPixel(x, y + 19) << 4 |
-          getPixel(x, y + 20) << 3 |
-          getPixel(x, y + 21) << 2 |
-          getPixel(x, y + 22) << 1 |
-          getPixel(x, y + 23);
+        result.push(
+          {
+            type: 'image',
+            property: 'data',
+            value: 'column',
+            width,
+            height: 24,
+            payload: [
+              0x1b, 0x58,
+              width & 0xff, (width >> 8) & 0xff,
+              ...bytes,
+              0x0a, 0x0d,
+            ],
+          },
+        );
       }
 
-      result.push(
-        {
-          type: 'image',
-          property: 'data',
-          value: 'column',
-          width,
-          height: 24,
-          payload: [
-            0x1b, 0x58,
-            width & 0xff, (width >> 8) & 0xff,
-            ...bytes,
-            0x0a, 0x0d,
-          ],
-        },
-      );
-    }
+      return result;
+    };
 
-    return result;
+    const processImageAsync = (chunkSize = 10) => {
+      return new Promise((resolve) => {
+        const asyncResult = [];
+        const totalSegments = Math.ceil(height / 24);
+        let currentSegment = 0;
+
+        const processChunk = () => {
+          const endSegment = Math.min(currentSegment + chunkSize, totalSegments);
+
+          for (let s = currentSegment; s < endSegment; s++) {
+            const y = s * 24;
+            const bytes = new Uint8Array(width * 3);
+
+            for (let x = 0; x < width; x++) {
+              const i = x * 3;
+
+              bytes[i] =
+                getPixel(x, y + 0) << 7 |
+                getPixel(x, y + 1) << 6 |
+                getPixel(x, y + 2) << 5 |
+                getPixel(x, y + 3) << 4 |
+                getPixel(x, y + 4) << 3 |
+                getPixel(x, y + 5) << 2 |
+                getPixel(x, y + 6) << 1 |
+                getPixel(x, y + 7);
+
+              bytes[i + 1] =
+                getPixel(x, y + 8) << 7 |
+                getPixel(x, y + 9) << 6 |
+                getPixel(x, y + 10) << 5 |
+                getPixel(x, y + 11) << 4 |
+                getPixel(x, y + 12) << 3 |
+                getPixel(x, y + 13) << 2 |
+                getPixel(x, y + 14) << 1 |
+                getPixel(x, y + 15);
+
+              bytes[i + 2] =
+                getPixel(x, y + 16) << 7 |
+                getPixel(x, y + 17) << 6 |
+                getPixel(x, y + 18) << 5 |
+                getPixel(x, y + 19) << 4 |
+                getPixel(x, y + 20) << 3 |
+                getPixel(x, y + 21) << 2 |
+                getPixel(x, y + 22) << 1 |
+                getPixel(x, y + 23);
+            }
+
+            asyncResult.push(
+              {
+                type: 'image',
+                property: 'data',
+                value: 'column',
+                width,
+                height: 24,
+                payload: [
+                  0x1b, 0x58,
+                  width & 0xff, (width >> 8) & 0xff,
+                  ...bytes,
+                  0x0a, 0x0d,
+                ],
+              },
+            );
+          }
+
+          currentSegment = endSegment;
+
+          if (currentSegment < totalSegments) {
+            setTimeout(processChunk, 0);
+          } else {
+            resolve(asyncResult);
+          }
+        };
+
+        processChunk();
+      });
+    };
+
+    // For large images (>500k pixels), use async processing to prevent stack overflow
+    const totalPixels = width * height;
+    const isLargeImage = totalPixels > 500000;
+
+    if (isLargeImage) {
+      return processImageAsync();
+    } else {
+      return processImageSync();
+    }
   }
 
   /**

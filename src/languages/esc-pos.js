@@ -115,32 +115,32 @@ class LanguageEscPos {
     }
 
     if (symbology === 'gs1-128' || symbology === 'gs1-databar-omni' ||
-        symbology === 'gs1-databar-truncated' || symbology === 'gs1-databar-limited' ||
-        symbology === 'gs1-databar-expanded') {
+      symbology === 'gs1-databar-truncated' || symbology === 'gs1-databar-limited' ||
+      symbology === 'gs1-databar-expanded') {
       width = options.width;
     }
 
     /* Set barcode options */
 
     result.push(
-        {
-          type: 'barcode',
-          property: 'height',
-          value: options.height,
-          payload: [0x1d, 0x68, options.height],
-        },
-        {
-          type: 'barcode',
-          property: 'width',
-          value: options.width,
-          payload: [0x1d, 0x77, width],
-        },
-        {
-          type: 'barcode',
-          property: 'text',
-          value: options.text,
-          payload: [0x1d, 0x48, options.text ? 0x02 : 0x00],
-        },
+      {
+        type: 'barcode',
+        property: 'height',
+        value: options.height,
+        payload: [0x1d, 0x68, options.height],
+      },
+      {
+        type: 'barcode',
+        property: 'width',
+        value: options.width,
+        payload: [0x1d, 0x77, width],
+      },
+      {
+        type: 'barcode',
+        property: 'text',
+        value: options.text,
+        payload: [0x1d, 0x48, options.text ? 0x02 : 0x00],
+      },
     );
 
 
@@ -162,21 +162,21 @@ class LanguageEscPos {
       /* Function B symbologies */
 
       result.push(
-          {
-            type: 'barcode',
-            value: {symbology: symbology, data: value},
-            payload: [0x1d, 0x6b, identifier, bytes.length, ...bytes],
-          },
+        {
+          type: 'barcode',
+          value: { symbology: symbology, data: value },
+          payload: [0x1d, 0x6b, identifier, bytes.length, ...bytes],
+        },
       );
     } else {
       /* Function A symbologies */
 
       result.push(
-          {
-            type: 'barcode',
-            value: {symbology: symbology, data: value},
-            payload: [0x1d, 0x6b, identifier, ...bytes, 0x00],
-          },
+        {
+          type: 'barcode',
+          value: { symbology: symbology, data: value },
+          payload: [0x1d, 0x6b, identifier, ...bytes, 0x00],
+        },
       );
     }
 
@@ -202,12 +202,12 @@ class LanguageEscPos {
 
       if (options.model in models) {
         result.push(
-            {
-              type: 'qrcode',
-              property: 'model',
-              value: options.model,
-              payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, models[options.model], 0x00],
-            },
+          {
+            type: 'qrcode',
+            property: 'model',
+            value: options.model,
+            payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, models[options.model], 0x00],
+          },
         );
       } else {
         throw new Error('Model must be 1 or 2');
@@ -225,12 +225,12 @@ class LanguageEscPos {
     }
 
     result.push(
-        {
-          type: 'qrcode',
-          property: 'size',
-          value: options.size,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, options.size],
-        },
+      {
+        type: 'qrcode',
+        property: 'size',
+        value: options.size,
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, options.size],
+      },
     );
 
     /* Error level */
@@ -244,12 +244,12 @@ class LanguageEscPos {
 
     if (options.errorlevel in errorlevels) {
       result.push(
-          {
-            type: 'qrcode',
-            property: 'errorlevel',
-            value: options.errorlevel,
-            payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, errorlevels[options.errorlevel]],
-          },
+        {
+          type: 'qrcode',
+          property: 'errorlevel',
+          value: options.errorlevel,
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, errorlevels[options.errorlevel]],
+        },
       );
     } else {
       throw new Error('Error level must be l, m, q or h');
@@ -261,22 +261,22 @@ class LanguageEscPos {
     const length = bytes.length + 3;
 
     result.push(
-        {
-          type: 'qrcode',
-          property: 'data',
-          value,
-          payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x31, 0x50, 0x30, ...bytes],
-        },
+      {
+        type: 'qrcode',
+        property: 'data',
+        value,
+        payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x31, 0x50, 0x30, ...bytes],
+      },
     );
 
     /* Print QR code */
 
     result.push(
-        {
-          type: 'qrcode',
-          command: 'print',
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30],
-        },
+      {
+        type: 'qrcode',
+        command: 'print',
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30],
+      },
     );
 
     return result;
@@ -302,12 +302,12 @@ class LanguageEscPos {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'columns',
-          value: options.columns,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x41, options.columns],
-        },
+      {
+        type: 'pdf417',
+        property: 'columns',
+        value: options.columns,
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x41, options.columns],
+      },
     );
 
     /* Rows */
@@ -321,12 +321,12 @@ class LanguageEscPos {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'rows',
-          value: options.rows,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x42, options.rows],
-        },
+      {
+        type: 'pdf417',
+        property: 'rows',
+        value: options.rows,
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x42, options.rows],
+      },
     );
 
     /* Width */
@@ -340,12 +340,12 @@ class LanguageEscPos {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'width',
-          value: options.width,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x43, options.width],
-        },
+      {
+        type: 'pdf417',
+        property: 'width',
+        value: options.width,
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x43, options.width],
+      },
     );
 
     /* Height */
@@ -359,12 +359,12 @@ class LanguageEscPos {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'height',
-          value: options.height,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x44, options.height],
-        },
+      {
+        type: 'pdf417',
+        property: 'height',
+        value: options.height,
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x44, options.height],
+      },
     );
 
     /* Error level */
@@ -378,23 +378,23 @@ class LanguageEscPos {
     }
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'errorlevel',
-          value: options.errorlevel,
-          payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x30, 0x45, 0x30, options.errorlevel + 0x30],
-        },
+      {
+        type: 'pdf417',
+        property: 'errorlevel',
+        value: options.errorlevel,
+        payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x30, 0x45, 0x30, options.errorlevel + 0x30],
+      },
     );
 
     /* Model: standard or truncated */
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'truncated',
-          value: !!options.truncated,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x46, options.truncated ? 0x01 : 0x00],
-        },
+      {
+        type: 'pdf417',
+        property: 'truncated',
+        value: !!options.truncated,
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x46, options.truncated ? 0x01 : 0x00],
+      },
     );
 
     /* Data */
@@ -403,22 +403,22 @@ class LanguageEscPos {
     const length = bytes.length + 3;
 
     result.push(
-        {
-          type: 'pdf417',
-          property: 'data',
-          value,
-          payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x30, 0x50, 0x30, ...bytes],
-        },
+      {
+        type: 'pdf417',
+        property: 'data',
+        value,
+        payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x30, 0x50, 0x30, ...bytes],
+      },
     );
 
     /* Print PDF417 code */
 
     result.push(
-        {
-          type: 'pdf417',
-          command: 'print',
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x51, 0x30],
-        },
+      {
+        type: 'pdf417',
+        command: 'print',
+        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x51, 0x30],
+      },
     );
 
     return result;
@@ -430,7 +430,7 @@ class LanguageEscPos {
      * @param {number} width        Width of the image
      * @param {number} height       Height of the image
      * @param {string} mode         Image encoding mode ('column' or 'raster')
-     * @return {Array}             Array of bytes to send to the printer
+     * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
      */
   image(image, width, height, mode) {
     const result = [];
@@ -457,6 +457,42 @@ class LanguageEscPos {
       return data;
     };
 
+    const getColumnDataAsync = (width, height, chunkSize = 10) => {
+      return new Promise((resolve) => {
+        const data = [];
+        const totalSegments = Math.ceil(height / 24);
+        let currentSegment = 0;
+
+        const processChunk = () => {
+          const endSegment = Math.min(currentSegment + chunkSize, totalSegments);
+
+          for (let s = currentSegment; s < endSegment; s++) {
+            const bytes = new Uint8Array(width * 3);
+
+            for (let x = 0; x < width; x++) {
+              for (let c = 0; c < 3; c++) {
+                for (let b = 0; b < 8; b++) {
+                  bytes[(x * 3) + c] |= getPixel(x, (s * 24) + b + (8 * c)) << (7 - b);
+                }
+              }
+            }
+
+            data.push(bytes);
+          }
+
+          currentSegment = endSegment;
+
+          if (currentSegment < totalSegments) {
+            setTimeout(processChunk, 0);
+          } else {
+            resolve(data);
+          }
+        };
+
+        processChunk();
+      });
+    };
+
     const getRowData = (width, height) => {
       const bytes = new Uint8Array((width * height) >> 3);
 
@@ -471,19 +507,91 @@ class LanguageEscPos {
       return bytes;
     };
 
+    const getRowDataAsync = (width, height, chunkSize = 100) => {
+      return new Promise((resolve) => {
+        const bytes = new Uint8Array((width * height) >> 3);
+        let currentRow = 0;
+
+        const processChunk = () => {
+          const endRow = Math.min(currentRow + chunkSize, height);
+
+          for (let y = currentRow; y < endRow; y++) {
+            for (let x = 0; x < width; x = x + 8) {
+              for (let b = 0; b < 8; b++) {
+                bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
+              }
+            }
+          }
+
+          currentRow = endRow;
+
+          if (currentRow < height) {
+            // Yield control to the event loop before processing next chunk
+            setTimeout(processChunk, 0);
+          } else {
+            resolve(bytes);
+          }
+        };
+
+        processChunk();
+      });
+    };
+
     /* Encode images with ESC * */
 
     if (mode == 'column') {
-      result.push(
+      // For large images (>500k pixels), use async processing to prevent stack overflow
+      const totalPixels = width * height;
+      const isLargeImage = totalPixels > 500000;
+
+      if (isLargeImage) {
+        // Return a Promise for async processing
+        return getColumnDataAsync(width, height).then((columnData) => {
+          const asyncResult = [];
+
+          asyncResult.push(
+            {
+              type: 'line-spacing',
+              value: '24 dots',
+              payload: [0x1b, 0x33, 0x24],
+            },
+          );
+
+          columnData.forEach((bytes) => {
+            asyncResult.push(
+              {
+                type: 'image',
+                property: 'data',
+                value: 'column',
+                width,
+                height: 24,
+                payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
+              },
+            );
+          });
+
+          asyncResult.push(
+            {
+              type: 'line-spacing',
+              value: 'default',
+              payload: [0x1b, 0x32],
+            },
+          );
+
+          return asyncResult;
+        });
+      } else {
+        // Use synchronous processing for smaller images
+        result.push(
           {
             type: 'line-spacing',
             value: '24 dots',
             payload: [0x1b, 0x33, 0x24],
           },
-      );
+        );
 
-      getColumnData(width, height).forEach((bytes) => {
-        result.push(
+        getColumnData(width, height).forEach((bytes) => {
+          result.push(
             {
               type: 'image',
               property: 'data',
@@ -492,22 +600,48 @@ class LanguageEscPos {
               height: 24,
               payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
             },
-        );
-      });
+          );
+        });
 
-      result.push(
+        result.push(
           {
             type: 'line-spacing',
             value: 'default',
             payload: [0x1b, 0x32],
           },
-      );
+        );
+      }
     }
 
     /* Encode images with GS v */
 
     if (mode == 'raster') {
-      result.push(
+      // For large images (>500k pixels), use async processing to prevent stack overflow
+      const totalPixels = width * height;
+      const isLargeImage = totalPixels > 500000;
+
+      if (isLargeImage) {
+        // Return a Promise for async processing
+        return getRowDataAsync(width, height).then((bytes) => {
+          return [
+            {
+              type: 'image',
+              command: 'data',
+              value: 'raster',
+              width,
+              height,
+              payload: [
+                0x1d, 0x76, 0x30, 0x00,
+                (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
+                height & 0xff, ((height >> 8) & 0xff),
+                ...bytes,
+              ],
+            },
+          ];
+        });
+      } else {
+        // Use synchronous processing for smaller images
+        result.push(
           {
             type: 'image',
             command: 'data',
@@ -521,7 +655,8 @@ class LanguageEscPos {
               ...getRowData(width, height),
             ],
           },
-      );
+        );
+      }
     }
 
     return result;
