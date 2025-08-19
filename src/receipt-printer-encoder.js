@@ -946,8 +946,11 @@ class ReceiptPrinterEncoder {
     // }
 
     const image = {
-      ...input,
-      data: new Uint8ClampedArray(input.data)
+      data: new Uint8ClampedArray(input.data),
+      height: input.height,
+      width: input.width,
+      colorSpace: input.colorSpace,
+      pixelFormat: input.pixelFormat,
     }
 
     this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
