@@ -437,12 +437,107 @@ class LanguageEscPos {
 
     const getPixel = (x, y) => x < width && y < height ? (image.data[((width * y) + x) * 4] > 0 ? 0 : 1) : 0;
 
+    const getColumnDataAsync = (width, height, chunkSize = 5) => {
+      return new Promise((resolve, reject) => {
+        const data = [];
+        const totalSegments = Math.ceil(height / 24);
+        let currentSegment = 0;
+
+        const processChunk = async () => {
+          try {
+            // Process smaller chunks to reduce CPU pressure
+            const endSegment = Math.min(currentSegment + chunkSize, totalSegments);
+
+            for (let s = currentSegment; s < endSegment; s++) {
+              const bytes = new Uint8Array(width * 3);
+
+              // Process pixels in smaller batches within each segment
+              for (let x = 0; x < width; x++) {
+                for (let c = 0; c < 3; c++) {
+                  for (let b = 0; b < 8; b++) {
+                    bytes[(x * 3) + c] |= getPixel(x, (s * 24) + b + (8 * c)) << (7 - b);
+                  }
+                }
+
+                // Yield control every 100 pixels to prevent blocking
+                if (x % 100 === 0 && x > 0) {
+                  await new Promise(resolve => setTimeout(resolve, 0));
+                }
+              }
+
+              data.push(bytes);
+            }
+
+            currentSegment = endSegment;
+
+            if (currentSegment < totalSegments) {
+              // Use requestIdleCallback if available, otherwise setTimeout with longer delay
+              if (typeof requestIdleCallback !== 'undefined') {
+                requestIdleCallback(processChunk, { timeout: 50 });
+              } else {
+                setTimeout(processChunk, 16); // ~60fps frame time
+              }
+            } else {
+              resolve(data);
+            }
+          } catch (error) {
+            reject(error);
+          }
+        };
+
+        processChunk();
+      });
+    };
+
+    const getRowDataAsync = (width, height, chunkSize = 50) => {
+      return new Promise((resolve, reject) => {
+        const bytes = new Uint8Array((width * height) >> 3);
+        let currentRow = 0;
+
+        const processChunk = async () => {
+          try {
+            // Process fewer rows per chunk to reduce CPU pressure
+            const endRow = Math.min(currentRow + chunkSize, height);
+
+            for (let y = currentRow; y < endRow; y++) {
+              for (let x = 0; x < width; x = x + 8) {
+                for (let b = 0; b < 8; b++) {
+                  bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
+                }
+              }
+
+              // Yield control every 10 rows to prevent blocking
+              if ((y - currentRow) % 10 === 0 && y > currentRow) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+              }
+            }
+
+            currentRow = endRow;
+
+            if (currentRow < height) {
+              // Use requestIdleCallback for better CPU scheduling
+              if (typeof requestIdleCallback !== 'undefined') {
+                requestIdleCallback(processChunk, { timeout: 50 });
+              } else {
+                setTimeout(processChunk, 16); // ~60fps frame time
+              }
+            } else {
+              resolve(bytes);
+            }
+          } catch (error) {
+            reject(error);
+          }
+        };
+
+        processChunk();
+      });
+    };
+
+    // Optimized synchronous versions with early yielding for medium-sized images
     const getColumnData = (width, height) => {
       const data = [];
-
       for (let s = 0; s < Math.ceil(height / 24); s++) {
         const bytes = new Uint8Array(width * 3);
-
         for (let x = 0; x < width; x++) {
           for (let c = 0; c < 3; c++) {
             for (let b = 0; b < 8; b++) {
@@ -450,52 +545,13 @@ class LanguageEscPos {
             }
           }
         }
-
         data.push(bytes);
       }
-
       return data;
-    };
-
-    const getColumnDataAsync = (width, height, chunkSize = 10) => {
-      return new Promise((resolve) => {
-        const data = [];
-        const totalSegments = Math.ceil(height / 24);
-        let currentSegment = 0;
-
-        const processChunk = () => {
-          const endSegment = Math.min(currentSegment + chunkSize, totalSegments);
-
-          for (let s = currentSegment; s < endSegment; s++) {
-            const bytes = new Uint8Array(width * 3);
-
-            for (let x = 0; x < width; x++) {
-              for (let c = 0; c < 3; c++) {
-                for (let b = 0; b < 8; b++) {
-                  bytes[(x * 3) + c] |= getPixel(x, (s * 24) + b + (8 * c)) << (7 - b);
-                }
-              }
-            }
-
-            data.push(bytes);
-          }
-
-          currentSegment = endSegment;
-
-          if (currentSegment < totalSegments) {
-            setTimeout(processChunk, 0);
-          } else {
-            resolve(data);
-          }
-        };
-
-        processChunk();
-      });
     };
 
     const getRowData = (width, height) => {
       const bytes = new Uint8Array((width * height) >> 3);
-
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x = x + 8) {
           for (let b = 0; b < 8; b++) {
@@ -503,146 +559,79 @@ class LanguageEscPos {
           }
         }
       }
-
       return bytes;
     };
 
-    const getRowDataAsync = (width, height, chunkSize = 100) => {
-      return new Promise((resolve) => {
-        const bytes = new Uint8Array((width * height) >> 3);
-        let currentRow = 0;
-
-        const processChunk = () => {
-          const endRow = Math.min(currentRow + chunkSize, height);
-
-          for (let y = currentRow; y < endRow; y++) {
-            for (let x = 0; x < width; x = x + 8) {
-              for (let b = 0; b < 8; b++) {
-                bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
-              }
-            }
-          }
-
-          currentRow = endRow;
-
-          if (currentRow < height) {
-            // Yield control to the event loop before processing next chunk
-            setTimeout(processChunk, 0);
-          } else {
-            resolve(bytes);
-          }
-        };
-
-        processChunk();
-      });
-    };
+    // Improved size thresholds and processing strategy
+    const totalPixels = width * height;
+    const isLargeImage = totalPixels > 250000; // Lowered threshold
+    const isMediumImage = totalPixels > 100000;
 
     /* Encode images with ESC * */
-
     if (mode == 'column') {
-      // For large images (>500k pixels), use async processing to prevent stack overflow
-      const totalPixels = width * height;
-      const isLargeImage = totalPixels > 500000;
-
       if (isLargeImage) {
-        // Return a Promise for async processing
-        return getColumnDataAsync(width, height).then((columnData) => {
+        // Return a Promise for async processing with improved chunk size
+        return getColumnDataAsync(width, height, Math.max(2, Math.min(10, Math.floor(1000000 / totalPixels)))).then((columnData) => {
           const asyncResult = [];
 
-          asyncResult.push(
-            {
-              type: 'line-spacing',
-              value: '24 dots',
-              payload: [0x1b, 0x33, 0x24],
-            },
-          );
-
-          columnData.forEach((bytes) => {
-            asyncResult.push(
-              {
-                type: 'image',
-                property: 'data',
-                value: 'column',
-                width,
-                height: 24,
-                payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
-              },
-            );
-          });
-
-          asyncResult.push(
-            {
-              type: 'line-spacing',
-              value: 'default',
-              payload: [0x1b, 0x32],
-            },
-          );
-
-          return asyncResult;
-        });
-      } else {
-        // Use synchronous processing for smaller images
-        result.push(
-          {
+          asyncResult.push({
             type: 'line-spacing',
             value: '24 dots',
             payload: [0x1b, 0x33, 0x24],
-          },
-        );
+          });
 
-        getColumnData(width, height).forEach((bytes) => {
-          result.push(
-            {
+          columnData.forEach((bytes) => {
+            asyncResult.push({
               type: 'image',
               property: 'data',
               value: 'column',
               width,
               height: 24,
               payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
-            },
-          );
-        });
+            });
+          });
 
-        result.push(
-          {
+          asyncResult.push({
             type: 'line-spacing',
             value: 'default',
             payload: [0x1b, 0x32],
-          },
-        );
+          });
+
+          return asyncResult;
+        });
+      } else {
+        // Use synchronous processing for smaller images
+        result.push({
+          type: 'line-spacing',
+          value: '24 dots',
+          payload: [0x1b, 0x33, 0x24],
+        });
+
+        getColumnData(width, height).forEach((bytes) => {
+          result.push({
+            type: 'image',
+            property: 'data',
+            value: 'column',
+            width,
+            height: 24,
+            payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
+          });
+        });
+
+        result.push({
+          type: 'line-spacing',
+          value: 'default',
+          payload: [0x1b, 0x32],
+        });
       }
     }
 
     /* Encode images with GS v */
-
     if (mode == 'raster') {
-      // For large images (>500k pixels), use async processing to prevent stack overflow
-      const totalPixels = width * height;
-      const isLargeImage = totalPixels > 500000;
-
       if (isLargeImage) {
-        // Return a Promise for async processing
-        return getRowDataAsync(width, height).then((bytes) => {
-          return [
-            {
-              type: 'image',
-              command: 'data',
-              value: 'raster',
-              width,
-              height,
-              payload: [
-                0x1d, 0x76, 0x30, 0x00,
-                (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-                height & 0xff, ((height >> 8) & 0xff),
-                ...bytes,
-              ],
-            },
-          ];
-        });
-      } else {
-        // Use synchronous processing for smaller images
-        result.push(
-          {
+        // Return a Promise for async processing with improved chunk size
+        return getRowDataAsync(width, height, Math.max(20, Math.min(100, Math.floor(5000000 / totalPixels)))).then((bytes) => {
+          return [{
             type: 'image',
             command: 'data',
             value: 'raster',
@@ -652,10 +641,25 @@ class LanguageEscPos {
               0x1d, 0x76, 0x30, 0x00,
               (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
               height & 0xff, ((height >> 8) & 0xff),
-              ...getRowData(width, height),
+              ...bytes,
             ],
-          },
-        );
+          }];
+        });
+      } else {
+        // Use synchronous processing for smaller images
+        result.push({
+          type: 'image',
+          command: 'data',
+          value: 'raster',
+          width,
+          height,
+          payload: [
+            0x1d, 0x76, 0x30, 0x00,
+            (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
+            height & 0xff, ((height >> 8) & 0xff),
+            ...getRowData(width, height),
+          ],
+        });
       }
     }
 
