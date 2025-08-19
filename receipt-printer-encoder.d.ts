@@ -58,7 +58,7 @@ export default class ReceiptPrinterEncoder {
     errorlevel?: string
   ): this;
   pdf417(value: string, options?: object): this;
-  image(input: IImageData, width: number, height: number): this;
+  image(input: IImageData, width: number, height: number): Promise<this>;
   cut(value?: string): this;
   pulse(device?: number, on?: number, off?: number): this;
   raw(data: any[]): this;
