@@ -52,7 +52,7 @@ class MemoryPool {
     #maxPoolSize = 10;
 
     /** @type {number} */
-    #maxBufferSize = 1024 * 1024; // 1MB max pooled buffer
+    #maxBufferSize = 4 * 1024 * 1024; // 4MB max pooled buffer (increased for large receipts)
 
     /**
      * Acquire a buffer of at least the specified size
@@ -258,6 +258,92 @@ class ImageEncoder {
             widthBytes,
             height,
         };
+    }
+
+    /**
+     * Default strip height for strip-based raster encoding
+     * 256 rows is ~18KB per strip for 576px width - good balance of memory and efficiency
+     * @type {number}
+     */
+    static IMAGE_STRIP_HEIGHT = 256;
+
+    /**
+     * Convert image to raster bitmap format in horizontal strips
+     * Used for large images to avoid memory issues with single large buffer.
+     * Each strip generates a separate GS v 0 command - printers handle this as continuous print.
+     *
+     * @param {ImageData} image - Source image data
+     * @param {number} width - Target width (must be multiple of 8)
+     * @param {number} height - Target height
+     * @param {number} [stripHeight=256] - Height of each strip in rows
+     * @return {{strips: RasterResult[], widthBytes: number, totalHeight: number}}
+     */
+    static pixelsToRasterStrips(image, width, height, stripHeight = this.IMAGE_STRIP_HEIGHT) {
+        this.validateImage(image);
+        this.validateDimensions(width, height);
+
+        const widthBytes = width >> 3; // width / 8
+        const strips = [];
+        const totalStrips = Math.ceil(height / stripHeight);
+
+        for (let s = 0; s < totalStrips; s++) {
+            const startY = s * stripHeight;
+            const currentStripHeight = Math.min(stripHeight, height - startY);
+            const stripBytes = widthBytes * currentStripHeight;
+
+            const bytes = this.#memoryPool.acquire(stripBytes);
+            const stripData = bytes.length === stripBytes ? bytes : bytes.subarray(0, stripBytes);
+            stripData.fill(0);
+
+            for (let y = 0; y < currentStripHeight; y++) {
+                const srcY = startY + y;
+                const rowOffset = y * widthBytes;
+
+                for (let x = 0; x < width; x += 8) {
+                    let byte = 0;
+                    for (let b = 0; b < 8; b++) {
+                        byte |= this.getPixel(image, x + b, srcY, width, height) << (7 - b);
+                    }
+                    stripData[rowOffset + (x >> 3)] = byte;
+                }
+            }
+
+            strips.push({
+                data: stripData,
+                widthBytes,
+                height: currentStripHeight,
+            });
+        }
+
+        return {
+            strips,
+            widthBytes,
+            totalHeight: height,
+        };
+    }
+
+    /**
+     * Build multiple ESC/POS raster commands from strips
+     * Returns array of Uint8Array commands, one per strip
+     *
+     * @param {RasterResult[]} strips - Array of raster strip results
+     * @param {boolean} [useCompression=false] - Use RLE compression
+     * @return {Uint8Array[]} Array of complete GS v 0 commands
+     */
+    static buildRasterCommandsFromStrips(strips, useCompression = false) {
+        const commands = [];
+
+        for (const strip of strips) {
+            const command = this.buildRasterCommand(
+                strip.data,
+                strip.widthBytes,
+                strip.height,
+                useCompression,
+            );
+            commands.push(command.command);
+        }
+
+        return commands;
     }
 
     /**

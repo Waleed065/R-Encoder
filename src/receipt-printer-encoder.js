@@ -1235,31 +1235,58 @@ class ReceiptPrinterEncoder {
 
     /* Build the array */
 
-    let result = [];
+    // Calculate total size first to avoid reallocation
+    let totalSize = 0;
     let last = null;
+    const newlineBytes = this.#options.newline === '\n\r' ? 2 : (this.#options.newline === '\n' ? 1 : 0);
 
     for (const line of lines) {
       for (const item of line) {
-        result.push(...item.payload);
+        if (item.payload) {
+          // Handle both Array and Uint8Array payloads
+          totalSize += item.payload.length;
+        }
+        last = item;
+      }
+      totalSize += newlineBytes;
+    }
+
+    // Allocate result buffer
+    const result = new Uint8Array(totalSize);
+    let offset = 0;
+
+    for (const line of lines) {
+      for (const item of line) {
+        if (item.payload) {
+          // Handle both Array and Uint8Array payloads efficiently
+          if (item.payload instanceof Uint8Array) {
+            result.set(item.payload, offset);
+            offset += item.payload.length;
+          } else {
+            // It's a regular array
+            for (let i = 0; i < item.payload.length; i++) {
+              result[offset++] = item.payload[i];
+            }
+          }
+        }
         last = item;
       }
 
       if (this.#options.newline === '\n\r') {
-        result.push(0x0a, 0x0d);
-      }
-
-      if (this.#options.newline === '\n') {
-        result.push(0x0a);
+        result[offset++] = 0x0a;
+        result[offset++] = 0x0d;
+      } else if (this.#options.newline === '\n') {
+        result[offset++] = 0x0a;
       }
     }
 
     /* If the last command is a pulse, do not feed */
 
     if (last && last.type === 'pulse') {
-      result = result.slice(0, 0 - this.#options.newline.length);
+      return result.subarray(0, offset - newlineBytes);
     }
 
-    return Uint8Array.from(result);
+    return result.subarray(0, offset);
   }
 
   /**

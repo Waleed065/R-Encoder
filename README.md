@@ -7,6 +7,7 @@ Enterprise-grade library for generating ESC/POS, StarLine, and StarPRNT command 
 - ✅ **Multi-protocol support**: ESC/POS, StarLine, StarPRNT
 - ✅ **33 built-in printer definitions** with automatic capability detection
 - ✅ **Memory-efficient image processing** - no stack overflow on large images
+- ✅ **Strip-based raster encoding** - automatically splits large images into 256px-height strips to prevent memory overflow
 - ✅ **RLE compression** for supported printers (40-98% size reduction)
 - ✅ **Streaming transmission** with backpressure support
 - ✅ **TypeScript definitions** included
@@ -154,12 +155,29 @@ async function printNormalReceipt(printerService) {
 
 For receipts that need custom fonts, complex layouts, or graphics, render the entire receipt as an image:
 
+**Technical: Strip-Based Raster Encoding**
+
+Large raster images are automatically split into 256-pixel-height strips to prevent memory overflow. Each strip generates a separate ESC/POS GS v 0 command, which the printer concatenates seamlessly as continuous output. This architecture prevents single large buffer allocations while maintaining print quality.
+
+**Binary GS v 0 Command Structure:**
+- `0x1D 0x76 0x30` - GS v 0 command header
+- `m` (1 byte) - Mode (0x00 = uncompressed, 0x01 = RLE compressed)
+- `xL xH` (2 bytes) - Width in bytes (little-endian), each strip uses same width as full image
+- `yL yH` (2 bytes) - Height in pixels (little-endian), typically 256 for all strips except last
+- `[raster data]` - 1-bit monochrome bitmap (MSB first, row-major)
+
+**Example for 500px tall × 576px wide image:**
+- Strip 1: 256 rows → GS v 0 header + width (72 bytes) + height (256) + 18,432 bytes raster data
+- Strip 2: 244 rows → GS v 0 header + width (72 bytes) + height (244) + 17,568 bytes raster data
+- Memory pool: 4MB max, prevents allocation failures
+
 ```javascript
 import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
 /**
  * Print a full raster receipt (entire receipt is an image)
  * Useful for custom fonts, complex layouts, or branded designs
+ * Automatically handles large images via strip-based encoding (256px height default)
  */
 async function printRasterReceipt(printerService, receiptImageData) {
   const encoder = new ReceiptPrinterEncoder({
@@ -170,11 +188,11 @@ async function printRasterReceipt(printerService, receiptImageData) {
   // receiptImageData should be an ImageData object with:
   // - data: Uint8ClampedArray (RGBA pixels)
   // - width: number (must be multiple of 8, typically 384 or 576)
-  // - height: number
+  // - height: number (can be unlimited; library auto-splits into 256px strips)
 
   encoder.initialize();
 
-  // Print the raster receipt
+  // Print the raster receipt - library handles large images via strip-based encoding
   await encoder.image(
     receiptImageData,
     receiptImageData.width,
@@ -210,11 +228,13 @@ async function createReceiptImage(htmlContent) {
 
 **Recommended image dimensions:**
 
-| Paper Width | DPI | Pixel Width |
-| ----------- | --- | ----------- |
-| 58mm        | 203 | 384px       |
-| 80mm        | 203 | 576px       |
-| 80mm        | 180 | 512px       |
+| Paper Width | DPI | Pixel Width | Max Height |
+| ----------- | --- | ----------- | ---------- |
+| 58mm        | 203 | 384px       | Unlimited  |
+| 80mm        | 203 | 576px       | Unlimited  |
+| 80mm        | 180 | 512px       | Unlimited  |
+
+**Height is unlimited**: Images are automatically split into 256-pixel-height strips. For example, a 2000px tall image is divided into 8 strips (7 × 256px + 1 × 48px). The library maintains a 4MB memory pool per strip to prevent allocation failures. Memory-efficient processing prevents main thread blocking during large image encoding.
 
 ---
 
@@ -293,10 +313,126 @@ async function printWithSignature(printerService, signatureImageData) {
 
 ### 4. Large Image Printing (Streaming with Backpressure)
 
-For large images or full raster receipts, use streaming to prevent printer buffer overflow:
+For large images or full raster receipts, use streaming to prevent printer buffer overflow. **Technical: Strip-Level Backpressure**
+
+Images are processed using strip-based encoding: each 256-pixel-height strip generates a separate GS v 0 command. Backpressure control operates at the **strip level**, not the monolithic image level. The encoder yields control after every 4 strips to prevent UI blocking. Memory pool (4MB max) ensures consistent performance regardless of image height.
 
 ```javascript
 import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
+
+/**
+ * Print large image with streaming and backpressure control
+ * This prevents printer buffer overflow and app crashes
+ * Backpressure operates at 256px strip boundaries
+ */
+async function printLargeImage(printerService, largeImageData) {
+  const encoder = new ReceiptPrinterEncoder({
+    printerModel: "epson-tm-t88vi",
+    imageMode: "raster",
+  });
+
+  encoder.initialize();
+
+  // Add the large image - processed memory-efficiently via strip-based encoding
+  // For example, a 2000px tall image becomes 8 strips (7×256px + 1×48px)
+  // Each strip generates a separate GS v 0 command
+  await encoder.image(
+    largeImageData,
+    largeImageData.width,
+    largeImageData.height
+  );
+
+  encoder.cut();
+
+  // Use streaming transmission with backpressure
+  let totalBytesSent = 0;
+  let stripCount = 0;
+
+  for await (const chunk of encoder.encodeAsyncIterator({
+    chunkSize: 512, // 512 bytes per chunk (optimal for most printers)
+
+    onChunkSent: async (info) => {
+      console.log(
+        `Progress: ${info.index + 1}/${info.total} chunks (${Math.round(
+          (info.bytesSent / info.totalBytes) * 100
+        )}%)`
+      );
+
+      // Track which strip we're in (each strip ≈ 18-20KB for 576px width)
+      const estimatedStripIndex = Math.floor(info.bytesSent / 20480);
+      if (estimatedStripIndex > stripCount) {
+        stripCount = estimatedStripIndex;
+        console.log(`  Strip ${stripCount}: Async yield executed, resuming...`);
+      }
+
+      // Optional: Add delay between chunks to prevent buffer overflow
+      // Adjust based on printer speed and connection quality
+      if (!info.isLast) {
+        await delay(5); // 5ms delay between chunks
+      }
+    },
+  })) {
+    // Send chunk to printer
+    await printerService.sendChunk(chunk);
+    totalBytesSent += chunk.length;
+  }
+
+  console.log(`Print complete: ${totalBytesSent} bytes sent across ${stripCount} strips`);
+}
+
+// Helper function
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Complete working example showing internals:
+ * - Image encoding with strip-based architecture
+ * - Async/await with yield control after every 4 strips
+ * - Memory pool management (4MB max per strip)
+ */
+async function printWithStripTracking(printerService, imageData) {
+  const encoder = new ReceiptPrinterEncoder({
+    printerModel: "epson-tm-t88vi",
+    imageMode: "raster",
+  });
+
+  encoder.initialize();
+
+  // Image 1000px tall × 576px wide example:
+  // - Strip count: Math.ceil(1000 / 256) = 4 strips
+  // - Each strip width: 576 / 8 = 72 bytes
+  // - Strip 1-3: 256 rows × 72 bytes = 18,432 bytes each
+  // - Strip 4: 232 rows × 72 bytes = 16,704 bytes
+  // - Total: ~73,572 bytes (easily fits in 4MB pool)
+  //
+  // GS v 0 command per strip:
+  // [0x1D 0x76 0x30] [mode:1] [xL:72 xH:0] [yL:256 yH:0] [18432 bytes raster data]
+  //
+  // Async execution: yield after strip 0, 4 (if exists)
+  // - Strip 0 processed: await new Promise(resolve => setTimeout(resolve, 0));
+  // - Strip 1 processed: no yield (i=1, 1%4=1)
+  // - Strip 2 processed: no yield (i=2, 2%4=2)
+  // - Strip 3 processed: no yield (i=3, 3%4=3)
+  // - Strip 4 processed: yield (i=4, 4%4=0 && i>0)
+
+  console.log("Encoding image with strip-based architecture...");
+  const startTime = Date.now();
+
+  await encoder.image(imageData, imageData.width, imageData.height);
+  encoder.cut();
+
+  console.log(`Image encoding complete in ${Date.now() - startTime}ms`);
+  console.log("Streaming to printer...");
+
+  let chunkCount = 0;
+  for await (const chunk of encoder.encodeAsyncIterator({ chunkSize: 512 })) {
+    await printerService.sendChunk(chunk);
+    chunkCount++;
+  }
+
+  console.log(`Sent ${chunkCount} chunks to printer`);
+}
 
 /**
  * Print large image with streaming and backpressure control

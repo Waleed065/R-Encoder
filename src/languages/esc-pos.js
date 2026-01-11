@@ -453,6 +453,7 @@ class LanguageEscPos {
 
   /**
    * Process image synchronously (for smaller images)
+   * Uses strip-based encoding for raster mode to handle large images efficiently.
    * @param {ImageData} image - Image data object
    * @param {number} width - Image width
    * @param {number} height - Image height
@@ -465,24 +466,34 @@ class LanguageEscPos {
     const result = [];
 
     if (mode === 'raster') {
-      const rasterResult = ImageEncoder.pixelsToRaster(image, width, height);
-      const command = ImageEncoder.buildRasterCommand(
-        rasterResult.data,
-        rasterResult.widthBytes,
-        rasterResult.height,
-        useCompression,
-      );
-
-      result.push({
-        type: 'image',
-        command: 'raster',
-        value: 'raster',
+      // Use strip-based encoding for all images to handle large receipts
+      // Each strip generates a separate GS v 0 command - printers handle as continuous print
+      const { strips } = ImageEncoder.pixelsToRasterStrips(
+        image,
         width,
         height,
-        compressed: command.compressed,
-        compressionRatio: command.ratio,
-        payload: Array.from(command.command),
-      });
+        ImageEncoder.IMAGE_STRIP_HEIGHT,
+      );
+
+      for (const strip of strips) {
+        const command = ImageEncoder.buildRasterCommand(
+          strip.data,
+          strip.widthBytes,
+          strip.height,
+          useCompression,
+        );
+
+        result.push({
+          type: 'image',
+          command: 'raster',
+          value: 'raster',
+          width,
+          height: strip.height,
+          compressed: command.compressed,
+          compressionRatio: command.ratio,
+          payload: command.command, // Keep as Uint8Array to avoid memory duplication
+        });
+      }
     } else {
       // Column mode (ESC *)
       const strips = ImageEncoder.pixelsToColumns(image, width, height);
@@ -502,7 +513,7 @@ class LanguageEscPos {
           value: 'column',
           width,
           height: 24,
-          payload: Array.from(command),
+          payload: command, // Keep as Uint8Array to avoid memory duplication
         });
       }
 
@@ -519,7 +530,8 @@ class LanguageEscPos {
 
   /**
    * Process image asynchronously (for larger images)
-   * Prevents UI blocking and reduces memory pressure
+   * Prevents UI blocking and reduces memory pressure.
+   * Uses strip-based encoding for raster mode to handle very large images.
    * @param {ImageData} image - Image data object
    * @param {number} width - Image width
    * @param {number} height - Image height
@@ -529,28 +541,52 @@ class LanguageEscPos {
    * @private
    */
   async _processImageAsync(image, width, height, mode, useCompression) {
-    const { commands, compressed } = await ImageEncoder.processImageAsync(
-      image,
-      width,
-      height,
-      mode,
-      { useCompression },
-    );
-
     const result = [];
 
     if (mode === 'raster') {
-      result.push({
-        type: 'image',
-        command: 'raster',
-        value: 'raster',
+      // Use strip-based encoding for large images to prevent memory issues
+      const { strips } = ImageEncoder.pixelsToRasterStrips(
+        image,
         width,
         height,
-        compressed,
-        payload: Array.from(commands[0]),
-      });
+        ImageEncoder.IMAGE_STRIP_HEIGHT,
+      );
+
+      for (let i = 0; i < strips.length; i++) {
+        const strip = strips[i];
+        const command = ImageEncoder.buildRasterCommand(
+          strip.data,
+          strip.widthBytes,
+          strip.height,
+          useCompression,
+        );
+
+        result.push({
+          type: 'image',
+          command: 'raster',
+          value: 'raster',
+          width,
+          height: strip.height,
+          compressed: command.compressed,
+          compressionRatio: command.ratio,
+          payload: command.command, // Keep as Uint8Array to avoid memory duplication
+        });
+
+        // Yield control periodically to prevent UI blocking
+        if (i % 4 === 0 && i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
     } else {
-      // Column mode commands
+      // Column mode - use existing processImageAsync for column strips
+      const { commands } = await ImageEncoder.processImageAsync(
+        image,
+        width,
+        height,
+        mode,
+        { useCompression },
+      );
+
       for (let i = 0; i < commands.length; i++) {
         const command = commands[i];
 
@@ -559,14 +595,14 @@ class LanguageEscPos {
           result.push({
             type: 'line-spacing',
             value: '24 dots',
-            payload: Array.from(command),
+            payload: command, // Keep as Uint8Array to avoid memory duplication
           });
         } else if (i === commands.length - 1) {
           // Last command is line spacing reset
           result.push({
             type: 'line-spacing',
             value: 'default',
-            payload: Array.from(command),
+            payload: command, // Keep as Uint8Array to avoid memory duplication
           });
         } else {
           result.push({
@@ -575,7 +611,7 @@ class LanguageEscPos {
             value: 'column',
             width,
             height: 24,
-            payload: Array.from(command),
+            payload: command, // Keep as Uint8Array to avoid memory duplication
           });
         }
       }

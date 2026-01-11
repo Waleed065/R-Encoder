@@ -402,7 +402,7 @@ class LanguageStarPrnt {
         value: 'column',
         width,
         height: 24,
-        payload: Array.from(command),
+        payload: command, // Keep as Uint8Array to avoid memory duplication
       });
     }
 
@@ -452,7 +452,7 @@ class LanguageStarPrnt {
         value: 'column',
         width,
         height: 24,
-        payload: Array.from(starCommand),
+        payload: starCommand, // Keep as Uint8Array to avoid memory duplication
       });
     }
 
