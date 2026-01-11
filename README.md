@@ -1,6 +1,6 @@
 # Receipt Printer Encoder
 
-Version: 1.0.0
+Version: 1.0.1
 
 Enterprise-grade library for generating ESC/POS, StarLine, and StarPRNT command streams for thermal receipt printers. Features memory-efficient image processing, RLE compression, and streaming transmission for large payloads.
 

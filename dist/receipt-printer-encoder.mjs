@@ -264,10 +264,12 @@ class ImageEncoder {
 
     /**
      * Default strip height for strip-based raster encoding
-     * 256 rows is ~18KB per strip for 576px width - good balance of memory and efficiency
+     * 512 rows = ~36KB per strip for 576px width
+     * Larger strips = fewer GS v 0 commands = faster printing
+     * Still safe for most printer memory buffers (typically 64KB+)
      * @type {number}
      */
-    static IMAGE_STRIP_HEIGHT = 256;
+    static IMAGE_STRIP_HEIGHT = 512;
 
     /**
      * Convert image to raster bitmap format in horizontal strips
