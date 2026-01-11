@@ -1,22 +1,18 @@
 {
     "vendor": "Star",
     "model": "mC-Print2",
-    
     "interfaces": {
         "usb": {
             "productName": "mC-Print2"
         }
     },
-
     "media": {
         "dpi": 203,
         "width": 58
     },
-
     "capabilities": {
         "language": "star-prnt",
         "codepages": "star",
-
         "fonts": {
             "A": {
                 "size": "12x24",
@@ -27,25 +23,39 @@
                 "columns": 42
             }
         },
-
         "barcodes": {
             "supported": true,
             "symbologies": [
-                "upca", "upce", "ean13", "ean8", "itf", "codabar", "code93", 
-                "code128", "gs1-128", "gs1-databar-omni", "gs1-databar-truncated", 
-                "gs1-databar-limited", "gs1-databar-expanded"
+                "upca",
+                "upce",
+                "ean13",
+                "ean8",
+                "itf",
+                "codabar",
+                "code93",
+                "code128",
+                "gs1-128",
+                "gs1-databar-omni",
+                "gs1-databar-truncated",
+                "gs1-databar-limited",
+                "gs1-databar-expanded"
             ]
         },
         "qrcode": {
             "supported": true,
-            "models": ["1", "2"]
+            "models": [
+                "1",
+                "2"
+            ]
         },
         "pdf417": {
             "supported": true
         },
-        
         "cutter": {
             "feed": 3
+        },
+        "images": {
+            "supportsCompression": false
         }
     }
 }

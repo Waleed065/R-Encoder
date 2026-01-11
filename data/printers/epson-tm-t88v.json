@@ -1,16 +1,13 @@
 {
     "vendor": "Epson",
     "model": "TM-T88V",
-    
     "media": {
         "dpi": 180,
         "width": 80
     },
-
     "capabilities": {
         "language": "esc-pos",
         "codepages": "epson",
-
         "fonts": {
             "A": {
                 "size": "12x24",
@@ -21,25 +18,39 @@
                 "columns": 56
             }
         },
-
         "barcodes": {
             "supported": true,
             "symbologies": [
-                "upca", "upce", "ean13", "ean8", "code39", "itf", "codabar", "code93", 
-                "code128", "gs1-databar-omni", "gs1-databar-truncated", 
-                "gs1-databar-limited", "gs1-databar-expanded"
+                "upca",
+                "upce",
+                "ean13",
+                "ean8",
+                "code39",
+                "itf",
+                "codabar",
+                "code93",
+                "code128",
+                "gs1-databar-omni",
+                "gs1-databar-truncated",
+                "gs1-databar-limited",
+                "gs1-databar-expanded"
             ]
         },
         "qrcode": {
             "supported": true,
-            "models": ["1", "2"]
+            "models": [
+                "1",
+                "2"
+            ]
         },
         "pdf417": {
             "supported": true
         },
-        
         "cutter": {
             "feed": 4
+        },
+        "images": {
+            "supportsCompression": true
         }
     }
 }

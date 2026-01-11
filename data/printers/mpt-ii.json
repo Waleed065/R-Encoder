@@ -1,16 +1,13 @@
 {
     "vendor": "",
     "model": "MPT-II",
-
     "media": {
         "dpi": 180,
         "width": 80
     },
-
     "capabilities": {
         "language": "esc-pos",
         "codepages": "mpt",
-
         "fonts": {
             "A": {
                 "size": "12x24",
@@ -25,11 +22,17 @@
                 "columns": 64
             }
         },
-
         "barcodes": {
             "supported": true,
             "symbologies": [
-                "upca", "upce", "ean13", "ean8", "code39", "itf", "codabar", "code93", 
+                "upca",
+                "upce",
+                "ean13",
+                "ean8",
+                "code39",
+                "itf",
+                "codabar",
+                "code93",
                 "code128"
             ]
         },
@@ -39,6 +42,9 @@
         },
         "pdf417": {
             "supported": false
-        }   
+        },
+        "images": {
+            "supportsCompression": false
+        }
     }
 }

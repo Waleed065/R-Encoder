@@ -1,5 +1,5 @@
-import fs from 'node:fs';
 import { stringify } from 'javascript-stringify';
+import fs from 'node:fs';
 
 
 function generatePrinters() {
@@ -12,7 +12,6 @@ function generatePrinters() {
 
         for (let file of files) {
             let data = fs.readFileSync('data/printers/' + file, 'utf8');
-            let printer;
 
             let definition = {};
 
@@ -62,16 +61,16 @@ function generateMappings() {
 
             for (let line of lines) {
                 if (line.length > 1 && line.charAt(0) != '#') {
-                    let [ skip, key, value ] = line.split(/\t/);
+                    let [skip, key, value] = line.split(/\t/);
                     list.set(parseInt(key, 16), value.trim());
                 }
             }
 
             let mapping = new Array(Math.max(...list.keys()));
 
-            for (let [ key, value ] of list) {
+            for (let [key, value] of list) {
                 mapping[key] = value;
-            }   
+            }
 
             output += `\t\t'${name}': ${stringify(mapping)},\n`;
         }
@@ -96,16 +95,16 @@ function generateMappings() {
 
             for (let line of lines) {
                 if (line.length > 1 && line.charAt(0) != '#') {
-                    let [ skip, key, value ] = line.split(/\t/);
+                    let [skip, key, value] = line.split(/\t/);
                     list.set(parseInt(key, 16), value.trim());
                 }
             }
 
             let mapping = new Array(Math.max(...list.keys()));
 
-            for (let [ key, value ] of list) {
+            for (let [key, value] of list) {
                 mapping[key] = value;
-            }   
+            }
 
             output += `\t\t'${name}': ${stringify(mapping)},\n`;
         }

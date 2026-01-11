@@ -3,6 +3,769 @@
 var CodepageEncoder = require('@point-of-sale/codepage-encoder');
 
 /**
+ * Enterprise-grade Image Encoder for receipt printers
+ *
+ * Provides memory-efficient image processing with RLE compression,
+ * chunked transmission, and streaming support for large images.
+ *
+ * @module ImageEncoder
+ */
+
+/**
+ * @typedef {Object} ImageData
+ * @property {Uint8ClampedArray|number[]} data - RGBA pixel data
+ * @property {number} width - Image width in pixels
+ * @property {number} height - Image height in pixels
+ */
+
+/**
+ * @typedef {Object} ChunkInfo
+ * @property {Uint8Array} chunk - The data chunk
+ * @property {number} index - Zero-based chunk index
+ * @property {number} total - Total number of chunks
+ * @property {boolean} isLast - Whether this is the final chunk
+ * @property {number} byteOffset - Byte offset from start
+ * @property {number} totalBytes - Total bytes in payload
+ */
+
+/**
+ * @typedef {Object} RLEResult
+ * @property {Uint8Array} data - Compressed or original data
+ * @property {boolean} compressed - Whether compression was applied
+ * @property {number} originalSize - Original data size
+ * @property {number} compressedSize - Resulting data size
+ * @property {number} ratio - Compression ratio (< 1.0 means compression helped)
+ */
+
+/**
+ * @typedef {Object} RasterResult
+ * @property {Uint8Array} data - Raster bitmap data
+ * @property {number} widthBytes - Width in bytes (width / 8)
+ * @property {number} height - Height in pixels
+ */
+
+/**
+ * Memory pool for Uint8Array reuse to reduce GC pressure
+ * @private
+ */
+class MemoryPool {
+  /** @type {Map<number, Uint8Array[]>} */
+  #pools = new Map();
+
+  /** @type {number} */
+  #maxPoolSize = 10;
+
+  /** @type {number} */
+  #maxBufferSize = 1024 * 1024; // 1MB max pooled buffer
+
+  /**
+   * Acquire a buffer of at least the specified size
+   * @param {number} size - Minimum buffer size needed
+   * @return {Uint8Array} - Buffer from pool or newly allocated
+   */
+  acquire(size) {
+    if (size > this.#maxBufferSize) {
+      // Don't pool very large buffers
+      return new Uint8Array(size);
+    }
+
+    // Round up to nearest power of 2 for better reuse
+    const poolSize = this.#nextPowerOf2(size);
+    const pool = this.#pools.get(poolSize);
+
+    if (pool && pool.length > 0) {
+      return pool.pop();
+    }
+
+    return new Uint8Array(poolSize);
+  }
+
+  /**
+   * Release a buffer back to the pool
+   * @param {Uint8Array} buffer - Buffer to release
+   */
+  release(buffer) {
+    if (buffer.length > this.#maxBufferSize) {
+      return; // Don't pool very large buffers
+    }
+
+    const poolSize = buffer.length;
+    let pool = this.#pools.get(poolSize);
+
+    if (!pool) {
+      pool = [];
+      this.#pools.set(poolSize, pool);
+    }
+
+    if (pool.length < this.#maxPoolSize) {
+      // Zero out the buffer before returning to pool
+      buffer.fill(0);
+      pool.push(buffer);
+    }
+  }
+
+  /**
+   * Clear all pooled buffers
+   */
+  clear() {
+    this.#pools.clear();
+  }
+
+  /**
+   * Get next power of 2 >= n
+   * @private
+   * @param {number} n
+   * @return {number}
+   */
+  #nextPowerOf2(n) {
+    if (n <= 0) return 1;
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    return n + 1;
+  }
+}
+
+/**
+ * ImageEncoder - Enterprise-grade image processing for receipt printers
+ *
+ * Features:
+ * - Memory pooling for reduced GC pressure
+ * - RLE compression for ESC/POS GS v 0 command
+ * - Chunked payload generation for streaming
+ * - Typed array operations (no spread operators)
+ * - Comprehensive input validation
+ */
+class ImageEncoder {
+  /** @type {MemoryPool} */
+  static #memoryPool = new MemoryPool();
+
+  /**
+   * Default chunk size for transmission (512 bytes)
+   * Optimized for typical printer buffer sizes
+   * @type {number}
+   */
+  static DEFAULT_CHUNK_SIZE = 512;
+
+  /**
+   * Maximum RLE run length per ESC/POS spec
+   * @type {number}
+   */
+  static MAX_RLE_RUN = 255;
+
+  /**
+   * Validate image input data
+   * @param {ImageData} image - Image data to validate
+   * @throws {Error} If validation fails
+   */
+  static validateImage(image) {
+    if (!image || typeof image !== 'object') {
+      throw new Error('ImageEncoder: image must be an object');
+    }
+
+    if (!image.data) {
+      throw new Error('ImageEncoder: image.data is required');
+    }
+
+    if (typeof image.width !== 'number' || image.width <= 0) {
+      throw new Error('ImageEncoder: image.width must be a positive number');
+    }
+
+    if (typeof image.height !== 'number' || image.height <= 0) {
+      throw new Error('ImageEncoder: image.height must be a positive number');
+    }
+
+    const expectedLength = image.width * image.height * 4;
+    if (image.data.length < expectedLength) {
+      throw new Error(
+          `ImageEncoder: image.data length (${image.data.length}) is less than expected (${expectedLength})`,
+      );
+    }
+  }
+
+  /**
+   * Validate dimensions for printing
+   * @param {number} width - Target width
+   * @param {number} height - Target height
+   * @throws {Error} If validation fails
+   */
+  static validateDimensions(width, height) {
+    if (typeof width !== 'number' || width <= 0) {
+      throw new Error('ImageEncoder: width must be a positive number');
+    }
+
+    if (typeof height !== 'number' || height <= 0) {
+      throw new Error('ImageEncoder: height must be a positive number');
+    }
+
+    if (width % 8 !== 0) {
+      throw new Error('ImageEncoder: width must be a multiple of 8');
+    }
+  }
+
+  /**
+   * Get pixel value at coordinates (0 = white/transparent, 1 = black)
+   * @param {ImageData} image - Source image
+   * @param {number} x - X coordinate
+   * @param {number} y - Y coordinate
+   * @param {number} width - Image width for bounds checking
+   * @param {number} height - Image height for bounds checking
+   * @return {number} 0 or 1
+   */
+  static getPixel(image, x, y, width, height) {
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+      return 0;
+    }
+    const index = ((width * y) + x) * 4;
+    // Pixel is black (print dot) if red channel <= 127
+    // Using red channel as grayscale indicator
+    return image.data[index] > 127 ? 0 : 1;
+  }
+
+  /**
+   * Convert image to raster bitmap format (row-major, MSB first)
+   * Used for ESC/POS GS v 0 command
+   *
+   * @param {ImageData} image - Source image data
+   * @param {number} width - Target width (must be multiple of 8)
+   * @param {number} height - Target height
+   * @return {RasterResult} Raster bitmap data
+   */
+  static pixelsToRaster(image, width, height) {
+    this.validateImage(image);
+    this.validateDimensions(width, height);
+
+    const widthBytes = width >> 3; // width / 8
+    const totalBytes = widthBytes * height;
+    const bytes = this.#memoryPool.acquire(totalBytes);
+
+    // Ensure we have exactly the size we need (pool may give larger)
+    const result = bytes.length === totalBytes ? bytes : bytes.subarray(0, totalBytes);
+    result.fill(0);
+
+    for (let y = 0; y < height; y++) {
+      const rowOffset = y * widthBytes;
+      for (let x = 0; x < width; x += 8) {
+        let byte = 0;
+        for (let b = 0; b < 8; b++) {
+          byte |= this.getPixel(image, x + b, y, width, height) << (7 - b);
+        }
+        result[rowOffset + (x >> 3)] = byte;
+      }
+    }
+
+    return {
+      data: result,
+      widthBytes,
+      height,
+    };
+  }
+
+  /**
+   * Convert image to column format (24-dot vertical strips)
+   * Used for ESC/POS ESC * command
+   *
+   * @param {ImageData} image - Source image data
+   * @param {number} width - Target width
+   * @param {number} height - Target height
+   * @return {Uint8Array[]} Array of column strip data
+   */
+  static pixelsToColumns(image, width, height) {
+    this.validateImage(image);
+
+    const strips = [];
+    const totalStrips = Math.ceil(height / 24);
+
+    for (let s = 0; s < totalStrips; s++) {
+      const stripY = s * 24;
+      const bytesPerStrip = width * 3;
+      const bytes = this.#memoryPool.acquire(bytesPerStrip);
+      const strip = bytes.length === bytesPerStrip ? bytes : bytes.subarray(0, bytesPerStrip);
+      strip.fill(0);
+
+      for (let x = 0; x < width; x++) {
+        const offset = x * 3;
+
+        // Pack 3 bytes per column (24 pixels vertical)
+        for (let c = 0; c < 3; c++) {
+          let byte = 0;
+          for (let b = 0; b < 8; b++) {
+            byte |= this.getPixel(image, x, stripY + (c * 8) + b, width, height) << (7 - b);
+          }
+          strip[offset + c] = byte;
+        }
+      }
+
+      strips.push(strip);
+    }
+
+    return strips;
+  }
+
+  /**
+   * Compress data using RLE (Run-Length Encoding)
+   * Compatible with ESC/POS GS v 0 mode 1
+   *
+   * RLE format: For runs of identical bytes:
+   * - If run length <= 1: output byte as-is
+   * - If run length > 1: output [count, byte]
+   *
+   * Note: ESC/POS RLE is a simple scheme where:
+   * - Byte values 0x00-0x7F: literal (n+1 bytes follow)
+   * - Byte values 0x80-0xFF: run of (n-0x80+2) copies of next byte
+   *
+   * @param {Uint8Array} data - Data to compress
+   * @return {RLEResult} Compression result
+   */
+  static compressRLE(data) {
+    if (!data || data.length === 0) {
+      return {
+        data: new Uint8Array(0),
+        compressed: false,
+        originalSize: 0,
+        compressedSize: 0,
+        ratio: 1.0,
+      };
+    }
+
+    // Worst case: no compression possible, need 2 bytes per input byte
+    const maxOutputSize = data.length * 2;
+    const output = this.#memoryPool.acquire(maxOutputSize);
+    let outputIndex = 0;
+
+    let i = 0;
+    while (i < data.length) {
+      const currentByte = data[i];
+      let runLength = 1;
+
+      // Count consecutive identical bytes
+      while (
+        i + runLength < data.length &&
+        data[i + runLength] === currentByte &&
+        runLength < this.MAX_RLE_RUN
+      ) {
+        runLength++;
+      }
+
+      if (runLength >= 2) {
+        // Encode as run: [0x80 + (runLength - 2), byte]
+        // This encodes runs of 2-129 bytes
+        if (runLength > 129) {
+          runLength = 129; // Cap at maximum encodable run
+        }
+        output[outputIndex++] = 0x80 + (runLength - 2);
+        output[outputIndex++] = currentByte;
+        i += runLength;
+      } else {
+        // Collect literal bytes (non-repeating)
+        const literalStart = i;
+        let literalCount = 0;
+
+        while (
+          i < data.length &&
+          literalCount < 128
+        ) {
+          // Check if next bytes form a run
+          if (i + 1 < data.length && data[i] === data[i + 1]) {
+            // Check if run is worth encoding (at least 2)
+            let ahead = 2;
+            while (
+              i + ahead < data.length &&
+              data[i + ahead] === data[i] &&
+              ahead < 3
+            ) {
+              ahead++;
+            }
+            if (ahead >= 2) {
+              break; // Stop literals, encode upcoming run
+            }
+          }
+          literalCount++;
+          i++;
+        }
+
+        if (literalCount > 0) {
+          // Encode literals: [literalCount - 1, ...bytes]
+          output[outputIndex++] = literalCount - 1;
+          for (let j = 0; j < literalCount; j++) {
+            output[outputIndex++] = data[literalStart + j];
+          }
+        }
+      }
+    }
+
+    const compressedSize = outputIndex;
+    const compressed = compressedSize < data.length;
+
+    // If compression didn't help, return original
+    if (!compressed) {
+      this.#memoryPool.release(output);
+      return {
+        data: new Uint8Array(data), // Copy to new array
+        compressed: false,
+        originalSize: data.length,
+        compressedSize: data.length,
+        ratio: 1.0,
+      };
+    }
+
+    // Create properly sized result
+    const result = new Uint8Array(compressedSize);
+    result.set(output.subarray(0, compressedSize));
+    this.#memoryPool.release(output);
+
+    return {
+      data: result,
+      compressed: true,
+      originalSize: data.length,
+      compressedSize,
+      ratio: compressedSize / data.length,
+    };
+  }
+
+  /**
+   * Decompress RLE data (for testing/verification)
+   * @param {Uint8Array} data - RLE compressed data
+   * @return {Uint8Array} Decompressed data
+   */
+  static decompressRLE(data) {
+    if (!data || data.length === 0) {
+      return new Uint8Array(0);
+    }
+
+    // Estimate output size (may need to grow)
+    const chunks = [];
+    let i = 0;
+
+    while (i < data.length) {
+      const control = data[i++];
+
+      if (control >= 0x80) {
+        // Run: repeat next byte (control - 0x80 + 2) times
+        const runLength = control - 0x80 + 2;
+        const value = data[i++];
+        const run = new Uint8Array(runLength);
+        run.fill(value);
+        chunks.push(run);
+      } else {
+        // Literals: copy (control + 1) bytes
+        const literalCount = control + 1;
+        chunks.push(data.slice(i, i + literalCount));
+        i += literalCount;
+      }
+    }
+
+    // Concatenate chunks
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    return result;
+  }
+
+  /**
+   * Generate payload chunks for streaming transmission
+   * Yields metadata-rich chunks for progress tracking and retry logic
+   *
+   * @param {Uint8Array} payload - Complete payload to chunk
+   * @param {number} [chunkSize=512] - Size of each chunk in bytes
+   * @yields {ChunkInfo} Chunk with metadata
+   */
+  static* generateChunks(payload, chunkSize = this.DEFAULT_CHUNK_SIZE) {
+    if (!payload || payload.length === 0) {
+      return;
+    }
+
+    if (chunkSize <= 0) {
+      throw new Error('ImageEncoder: chunkSize must be positive');
+    }
+
+    const totalBytes = payload.length;
+    const totalChunks = Math.ceil(totalBytes / chunkSize);
+
+    for (let i = 0; i < totalChunks; i++) {
+      const byteOffset = i * chunkSize;
+      const endOffset = Math.min(byteOffset + chunkSize, totalBytes);
+      const chunk = payload.subarray(byteOffset, endOffset);
+
+      yield {
+        chunk,
+        index: i,
+        total: totalChunks,
+        isLast: i === totalChunks - 1,
+        byteOffset,
+        totalBytes,
+      };
+    }
+  }
+
+  /**
+   * Async generator for chunked transmission with backpressure support
+   *
+   * @param {Uint8Array} payload - Complete payload to chunk
+   * @param {number} [chunkSize=512] - Size of each chunk in bytes
+   * @param {Function} [onChunkReady] - Optional callback before yielding each chunk
+   * @yields {ChunkInfo} Chunk with metadata
+   */
+  static async* generateChunksAsync(payload, chunkSize = this.DEFAULT_CHUNK_SIZE, onChunkReady) {
+    if (!payload || payload.length === 0) {
+      return;
+    }
+
+    if (chunkSize <= 0) {
+      throw new Error('ImageEncoder: chunkSize must be positive');
+    }
+
+    const totalBytes = payload.length;
+    const totalChunks = Math.ceil(totalBytes / chunkSize);
+
+    for (let i = 0; i < totalChunks; i++) {
+      const byteOffset = i * chunkSize;
+      const endOffset = Math.min(byteOffset + chunkSize, totalBytes);
+      const chunk = payload.subarray(byteOffset, endOffset);
+
+      const chunkInfo = {
+        chunk,
+        index: i,
+        total: totalChunks,
+        isLast: i === totalChunks - 1,
+        byteOffset,
+        totalBytes,
+      };
+
+      if (onChunkReady) {
+        await onChunkReady(chunkInfo);
+      }
+
+      yield chunkInfo;
+    }
+  }
+
+  /**
+   * Concatenate multiple Uint8Arrays efficiently
+   * Avoids spread operator and intermediate arrays
+   *
+   * @param {Uint8Array[]} arrays - Arrays to concatenate
+   * @return {Uint8Array} Concatenated result
+   */
+  static concatenate(...arrays) {
+    // Filter out null/undefined and calculate total length
+    const validArrays = arrays.filter((arr) => arr && arr.length > 0);
+    const totalLength = validArrays.reduce((sum, arr) => sum + arr.length, 0);
+
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+
+    for (const arr of validArrays) {
+      result.set(arr, offset);
+      offset += arr.length;
+    }
+
+    return result;
+  }
+
+  /**
+   * Build ESC/POS raster image command (GS v 0)
+   *
+   * @param {Uint8Array} rasterData - Raster bitmap data
+   * @param {number} widthBytes - Width in bytes
+   * @param {number} height - Height in pixels
+   * @param {boolean} [useCompression=false] - Use RLE compression (mode 1)
+   * @return {{command: Uint8Array, compressed: boolean, ratio: number}}
+   */
+  static buildRasterCommand(rasterData, widthBytes, height, useCompression = false) {
+    let data = rasterData;
+    let compressed = false;
+    let ratio = 1.0;
+
+    if (useCompression) {
+      const rleResult = this.compressRLE(rasterData);
+      if (rleResult.compressed) {
+        data = rleResult.data;
+        compressed = true;
+        ratio = rleResult.ratio;
+      }
+    }
+
+    // GS v 0 command: 1D 76 30 m xL xH yL yH [data]
+    // m = 0: normal, m = 1: RLE compressed
+    const mode = compressed ? 0x01 : 0x00;
+    const header = new Uint8Array([
+      0x1d, 0x76, 0x30, mode,
+      widthBytes & 0xff, (widthBytes >> 8) & 0xff,
+      height & 0xff, (height >> 8) & 0xff,
+    ]);
+
+    return {
+      command: this.concatenate(header, data),
+      compressed,
+      ratio,
+    };
+  }
+
+  /**
+   * Build ESC/POS column image command (ESC *)
+   *
+   * @param {Uint8Array} stripData - Column strip data (width * 3 bytes)
+   * @param {number} width - Width in pixels
+   * @return {Uint8Array} Complete command for one strip
+   */
+  static buildColumnCommand(stripData, width) {
+    // ESC * m nL nH [data]
+    // m = 33 (0x21) for 24-dot double-density
+    const header = new Uint8Array([
+      0x1b, 0x2a, 0x21,
+      width & 0xff, (width >> 8) & 0xff,
+    ]);
+    const footer = new Uint8Array([0x0a]); // Line feed
+
+    return this.concatenate(header, stripData, footer);
+  }
+
+  /**
+   * Build line spacing command
+   * @param {number} dots - Line spacing in dots (0 for default)
+   * @return {Uint8Array}
+   */
+  static buildLineSpacingCommand(dots) {
+    if (dots === 0) {
+      // Reset to default: ESC 2
+      return new Uint8Array([0x1b, 0x32]);
+    }
+    // Set line spacing: ESC 3 n
+    return new Uint8Array([0x1b, 0x33, dots & 0xff]);
+  }
+
+  /**
+   * Build Star PRNT column image command (ESC X)
+   *
+   * @param {Uint8Array} stripData - Column strip data
+   * @param {number} width - Width in pixels
+   * @return {Uint8Array} Complete command for one strip
+   */
+  static buildStarColumnCommand(stripData, width) {
+    // ESC X nL nH [data] LF CR
+    const header = new Uint8Array([
+      0x1b, 0x58,
+      width & 0xff, (width >> 8) & 0xff,
+    ]);
+    const footer = new Uint8Array([0x0a, 0x0d]); // LF CR
+
+    return this.concatenate(header, stripData, footer);
+  }
+
+  /**
+   * Release memory pool resources
+   * Call this when encoder is no longer needed
+   */
+  static releasePool() {
+    this.#memoryPool.clear();
+  }
+
+  /**
+   * Process image asynchronously with yielding for large images
+   * Prevents UI blocking on main thread
+   *
+   * @param {ImageData} image - Source image
+   * @param {number} width - Target width
+   * @param {number} height - Target height
+   * @param {'column'|'raster'} mode - Encoding mode
+   * @param {Object} [options] - Processing options
+   * @param {boolean} [options.useCompression=false] - Use RLE compression
+   * @param {number} [options.yieldInterval=1000] - Yield every N pixels
+   * @return {Promise<{commands: Uint8Array[], compressed: boolean}>}
+   */
+  static async processImageAsync(image, width, height, mode, options = {}) {
+    const {useCompression = false} = options;
+
+    this.validateImage(image);
+
+    const commands = [];
+    let compressed = false;
+
+    if (mode === 'raster') {
+      // For raster mode, process in horizontal strips
+      const widthBytes = width >> 3;
+      const stripHeight = 50; // Process 50 rows at a time
+      const totalStrips = Math.ceil(height / stripHeight);
+
+      const allData = this.#memoryPool.acquire(widthBytes * height);
+      let processedRows = 0;
+
+      for (let strip = 0; strip < totalStrips; strip++) {
+        const startY = strip * stripHeight;
+        const endY = Math.min(startY + stripHeight, height);
+
+        for (let y = startY; y < endY; y++) {
+          const rowOffset = y * widthBytes;
+          for (let x = 0; x < width; x += 8) {
+            let byte = 0;
+            for (let b = 0; b < 8; b++) {
+              byte |= this.getPixel(image, x + b, y, width, height) << (7 - b);
+            }
+            allData[rowOffset + (x >> 3)] = byte;
+          }
+          processedRows++;
+
+          // Yield control periodically
+          if (processedRows % 50 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+        }
+      }
+
+      const rasterData = allData.subarray(0, widthBytes * height);
+      const result = this.buildRasterCommand(rasterData, widthBytes, height, useCompression);
+      commands.push(result.command);
+      compressed = result.compressed;
+
+      this.#memoryPool.release(allData);
+    } else {
+      // Column mode
+      commands.push(this.buildLineSpacingCommand(36)); // 24-dot spacing
+
+      const totalStrips = Math.ceil(height / 24);
+
+      for (let s = 0; s < totalStrips; s++) {
+        const stripY = s * 24;
+        const bytesPerStrip = width * 3;
+        const strip = new Uint8Array(bytesPerStrip);
+
+        for (let x = 0; x < width; x++) {
+          const offset = x * 3;
+
+          for (let c = 0; c < 3; c++) {
+            let byte = 0;
+            for (let b = 0; b < 8; b++) {
+              byte |= this.getPixel(image, x, stripY + (c * 8) + b, width, height) << (7 - b);
+            }
+            strip[offset + c] = byte;
+          }
+
+          // Yield control periodically
+          if (x % 100 === 0 && x > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+        }
+
+        commands.push(this.buildColumnCommand(strip, width));
+      }
+
+      commands.push(this.buildLineSpacingCommand(0)); // Reset to default
+    }
+
+    return {commands, compressed};
+  }
+}
+
+/**
  * ESC/POS Language commands
  */
 class LanguageEscPos {
@@ -125,24 +888,24 @@ class LanguageEscPos {
     /* Set barcode options */
 
     result.push(
-      {
-        type: 'barcode',
-        property: 'height',
-        value: options.height,
-        payload: [0x1d, 0x68, options.height],
-      },
-      {
-        type: 'barcode',
-        property: 'width',
-        value: options.width,
-        payload: [0x1d, 0x77, width],
-      },
-      {
-        type: 'barcode',
-        property: 'text',
-        value: options.text,
-        payload: [0x1d, 0x48, options.text ? 0x02 : 0x00],
-      },
+        {
+          type: 'barcode',
+          property: 'height',
+          value: options.height,
+          payload: [0x1d, 0x68, options.height],
+        },
+        {
+          type: 'barcode',
+          property: 'width',
+          value: options.width,
+          payload: [0x1d, 0x77, width],
+        },
+        {
+          type: 'barcode',
+          property: 'text',
+          value: options.text,
+          payload: [0x1d, 0x48, options.text ? 0x02 : 0x00],
+        },
     );
 
 
@@ -164,21 +927,21 @@ class LanguageEscPos {
       /* Function B symbologies */
 
       result.push(
-        {
-          type: 'barcode',
-          value: { symbology: symbology, data: value },
-          payload: [0x1d, 0x6b, identifier, bytes.length, ...bytes],
-        },
+          {
+            type: 'barcode',
+            value: {symbology: symbology, data: value},
+            payload: [0x1d, 0x6b, identifier, bytes.length, ...bytes],
+          },
       );
     } else {
       /* Function A symbologies */
 
       result.push(
-        {
-          type: 'barcode',
-          value: { symbology: symbology, data: value },
-          payload: [0x1d, 0x6b, identifier, ...bytes, 0x00],
-        },
+          {
+            type: 'barcode',
+            value: {symbology: symbology, data: value},
+            payload: [0x1d, 0x6b, identifier, ...bytes, 0x00],
+          },
       );
     }
 
@@ -204,12 +967,12 @@ class LanguageEscPos {
 
       if (options.model in models) {
         result.push(
-          {
-            type: 'qrcode',
-            property: 'model',
-            value: options.model,
-            payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, models[options.model], 0x00],
-          },
+            {
+              type: 'qrcode',
+              property: 'model',
+              value: options.model,
+              payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, models[options.model], 0x00],
+            },
         );
       } else {
         throw new Error('Model must be 1 or 2');
@@ -227,12 +990,12 @@ class LanguageEscPos {
     }
 
     result.push(
-      {
-        type: 'qrcode',
-        property: 'size',
-        value: options.size,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, options.size],
-      },
+        {
+          type: 'qrcode',
+          property: 'size',
+          value: options.size,
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, options.size],
+        },
     );
 
     /* Error level */
@@ -246,12 +1009,12 @@ class LanguageEscPos {
 
     if (options.errorlevel in errorlevels) {
       result.push(
-        {
-          type: 'qrcode',
-          property: 'errorlevel',
-          value: options.errorlevel,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, errorlevels[options.errorlevel]],
-        },
+          {
+            type: 'qrcode',
+            property: 'errorlevel',
+            value: options.errorlevel,
+            payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, errorlevels[options.errorlevel]],
+          },
       );
     } else {
       throw new Error('Error level must be l, m, q or h');
@@ -263,22 +1026,22 @@ class LanguageEscPos {
     const length = bytes.length + 3;
 
     result.push(
-      {
-        type: 'qrcode',
-        property: 'data',
-        value,
-        payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x31, 0x50, 0x30, ...bytes],
-      },
+        {
+          type: 'qrcode',
+          property: 'data',
+          value,
+          payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x31, 0x50, 0x30, ...bytes],
+        },
     );
 
     /* Print QR code */
 
     result.push(
-      {
-        type: 'qrcode',
-        command: 'print',
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30],
-      },
+        {
+          type: 'qrcode',
+          command: 'print',
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30],
+        },
     );
 
     return result;
@@ -304,12 +1067,12 @@ class LanguageEscPos {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'columns',
-        value: options.columns,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x41, options.columns],
-      },
+        {
+          type: 'pdf417',
+          property: 'columns',
+          value: options.columns,
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x41, options.columns],
+        },
     );
 
     /* Rows */
@@ -323,12 +1086,12 @@ class LanguageEscPos {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'rows',
-        value: options.rows,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x42, options.rows],
-      },
+        {
+          type: 'pdf417',
+          property: 'rows',
+          value: options.rows,
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x42, options.rows],
+        },
     );
 
     /* Width */
@@ -342,12 +1105,12 @@ class LanguageEscPos {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'width',
-        value: options.width,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x43, options.width],
-      },
+        {
+          type: 'pdf417',
+          property: 'width',
+          value: options.width,
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x43, options.width],
+        },
     );
 
     /* Height */
@@ -361,12 +1124,12 @@ class LanguageEscPos {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'height',
-        value: options.height,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x44, options.height],
-      },
+        {
+          type: 'pdf417',
+          property: 'height',
+          value: options.height,
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x44, options.height],
+        },
     );
 
     /* Error level */
@@ -380,23 +1143,23 @@ class LanguageEscPos {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'errorlevel',
-        value: options.errorlevel,
-        payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x30, 0x45, 0x30, options.errorlevel + 0x30],
-      },
+        {
+          type: 'pdf417',
+          property: 'errorlevel',
+          value: options.errorlevel,
+          payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x30, 0x45, 0x30, options.errorlevel + 0x30],
+        },
     );
 
     /* Model: standard or truncated */
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'truncated',
-        value: !!options.truncated,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x46, options.truncated ? 0x01 : 0x00],
-      },
+        {
+          type: 'pdf417',
+          property: 'truncated',
+          value: !!options.truncated,
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x46, options.truncated ? 0x01 : 0x00],
+        },
     );
 
     /* Data */
@@ -405,22 +1168,22 @@ class LanguageEscPos {
     const length = bytes.length + 3;
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'data',
-        value,
-        payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x30, 0x50, 0x30, ...bytes],
-      },
+        {
+          type: 'pdf417',
+          property: 'data',
+          value,
+          payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x30, 0x50, 0x30, ...bytes],
+        },
     );
 
     /* Print PDF417 code */
 
     result.push(
-      {
-        type: 'pdf417',
-        command: 'print',
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x51, 0x30],
-      },
+        {
+          type: 'pdf417',
+          command: 'print',
+          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x51, 0x30],
+        },
     );
 
     return result;
@@ -432,235 +1195,153 @@ class LanguageEscPos {
      * @param {number} width        Width of the image
      * @param {number} height       Height of the image
      * @param {string} mode         Image encoding mode ('column' or 'raster')
+     * @param {Object} [options]    Additional options
+     * @param {boolean} [options.supportsCompression=false] Use RLE compression if supported
      * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
      */
-  image(image, width, height, mode) {
+  image(image, width, height, mode, options = {}) {
+    const {supportsCompression = false} = options;
+
+    // Size thresholds for async processing
+    const totalPixels = width * height;
+    const isLargeImage = totalPixels > 250000;
+    const isWideImage = width > 800;
+    const shouldUseAsync = isLargeImage || isWideImage;
+
+    if (shouldUseAsync) {
+      return this._processImageAsync(image, width, height, mode, supportsCompression);
+    }
+
+    return this._processImageSync(image, width, height, mode, supportsCompression);
+  }
+
+  /**
+   * Process image synchronously (for smaller images)
+   * @param {ImageData} image - Image data object
+   * @param {number} width - Image width
+   * @param {number} height - Image height
+   * @param {string} mode - Encoding mode ('column' or 'raster')
+   * @param {boolean} useCompression - Whether to use RLE compression
+   * @return {Array} Array of command objects
+   * @private
+   */
+  _processImageSync(image, width, height, mode, useCompression) {
     const result = [];
 
-    const getPixel = (x, y) => x < width && y < height ? (image.data[((width * y) + x) * 4] > 0 ? 0 : 1) : 0;
+    if (mode === 'raster') {
+      const rasterResult = ImageEncoder.pixelsToRaster(image, width, height);
+      const command = ImageEncoder.buildRasterCommand(
+          rasterResult.data,
+          rasterResult.widthBytes,
+          rasterResult.height,
+          useCompression,
+      );
 
-    const getColumnDataAsync = (width, height, chunkSize = 5) => {
-      return new Promise((resolve, reject) => {
-        const data = [];
-        const totalSegments = Math.ceil(height / 24);
-        let currentSegment = 0;
-
-        const processChunk = async () => {
-          try {
-            // Process smaller chunks to reduce CPU pressure
-            const endSegment = Math.min(currentSegment + chunkSize, totalSegments);
-
-            for (let s = currentSegment; s < endSegment; s++) {
-              const bytes = new Uint8Array(width * 3);
-
-              // Process pixels in smaller batches within each segment
-              for (let x = 0; x < width; x++) {
-                for (let c = 0; c < 3; c++) {
-                  for (let b = 0; b < 8; b++) {
-                    bytes[(x * 3) + c] |= getPixel(x, (s * 24) + b + (8 * c)) << (7 - b);
-                  }
-                }
-
-                // Yield control every 100 pixels to prevent blocking
-                if (x % 100 === 0 && x > 0) {
-                  await new Promise(resolve => setTimeout(resolve, 0));
-                }
-              }
-
-              data.push(bytes);
-            }
-
-            currentSegment = endSegment;
-
-            if (currentSegment < totalSegments) {
-              // Use requestIdleCallback if available, otherwise setTimeout with longer delay
-              if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(processChunk, { timeout: 50 });
-              } else {
-                setTimeout(processChunk, 16); // ~60fps frame time
-              }
-            } else {
-              resolve(data);
-            }
-          } catch (error) {
-            reject(error);
-          }
-        };
-
-        processChunk();
+      result.push({
+        type: 'image',
+        command: 'raster',
+        value: 'raster',
+        width,
+        height,
+        compressed: command.compressed,
+        compressionRatio: command.ratio,
+        payload: Array.from(command.command),
       });
-    };
+    } else {
+      // Column mode (ESC *)
+      const strips = ImageEncoder.pixelsToColumns(image, width, height);
 
-    const getRowDataAsync = (width, height, chunkSize = 50) => {
-      return new Promise((resolve, reject) => {
-        const bytes = new Uint8Array((width * height) >> 3);
-        let currentRow = 0;
-
-        const processChunk = async () => {
-          try {
-            // Process fewer rows per chunk to reduce CPU pressure
-            const endRow = Math.min(currentRow + chunkSize, height);
-
-            for (let y = currentRow; y < endRow; y++) {
-              for (let x = 0; x < width; x = x + 8) {
-                for (let b = 0; b < 8; b++) {
-                  bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
-                }
-              }
-
-              // Yield control every 10 rows to prevent blocking
-              if ((y - currentRow) % 10 === 0 && y > currentRow) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
-            }
-
-            currentRow = endRow;
-
-            if (currentRow < height) {
-              // Use requestIdleCallback for better CPU scheduling
-              if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(processChunk, { timeout: 50 });
-              } else {
-                setTimeout(processChunk, 16); // ~60fps frame time
-              }
-            } else {
-              resolve(bytes);
-            }
-          } catch (error) {
-            reject(error);
-          }
-        };
-
-        processChunk();
+      // Set 24-dot line spacing
+      result.push({
+        type: 'line-spacing',
+        value: '24 dots',
+        payload: [0x1b, 0x33, 0x24],
       });
-    };
 
-    // Optimized synchronous versions with early yielding for medium-sized images
-    const getColumnData = (width, height) => {
-      const data = [];
-      for (let s = 0; s < Math.ceil(height / 24); s++) {
-        const bytes = new Uint8Array(width * 3);
-        for (let x = 0; x < width; x++) {
-          for (let c = 0; c < 3; c++) {
-            for (let b = 0; b < 8; b++) {
-              bytes[(x * 3) + c] |= getPixel(x, (s * 24) + b + (8 * c)) << (7 - b);
-            }
-          }
-        }
-        data.push(bytes);
+      for (const stripData of strips) {
+        const command = ImageEncoder.buildColumnCommand(stripData, width);
+        result.push({
+          type: 'image',
+          property: 'data',
+          value: 'column',
+          width,
+          height: 24,
+          payload: Array.from(command),
+        });
       }
-      return data;
-    };
 
-    const getRowData = (width, height) => {
-      const bytes = new Uint8Array((width * height) >> 3);
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x = x + 8) {
-          for (let b = 0; b < 8; b++) {
-            bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
-          }
-        }
-      }
-      return bytes;
-    };
+      // Reset line spacing
+      result.push({
+        type: 'line-spacing',
+        value: 'default',
+        payload: [0x1b, 0x32],
+      });
+    }
 
-    // Improved size thresholds and processing strategy
-    const totalPixels = width * height;
-    const isLargeImage = totalPixels > 250000; // Lowered threshold
+    return result;
+  }
 
-    /* Encode images with ESC * */
-    if (mode == 'column') {
-      if (isLargeImage) {
-        // Return a Promise for async processing with improved chunk size
-        return getColumnDataAsync(width, height, Math.max(2, Math.min(10, Math.floor(1000000 / totalPixels)))).then((columnData) => {
-          const asyncResult = [];
+  /**
+   * Process image asynchronously (for larger images)
+   * Prevents UI blocking and reduces memory pressure
+   * @param {ImageData} image - Image data object
+   * @param {number} width - Image width
+   * @param {number} height - Image height
+   * @param {string} mode - Encoding mode ('column' or 'raster')
+   * @param {boolean} useCompression - Whether to use RLE compression
+   * @return {Promise<Array>} Promise resolving to array of command objects
+   * @private
+   */
+  async _processImageAsync(image, width, height, mode, useCompression) {
+    const {commands, compressed} = await ImageEncoder.processImageAsync(
+        image,
+        width,
+        height,
+        mode,
+        {useCompression},
+    );
 
-          asyncResult.push({
+    const result = [];
+
+    if (mode === 'raster') {
+      result.push({
+        type: 'image',
+        command: 'raster',
+        value: 'raster',
+        width,
+        height,
+        compressed,
+        payload: Array.from(commands[0]),
+      });
+    } else {
+      // Column mode commands
+      for (let i = 0; i < commands.length; i++) {
+        const command = commands[i];
+
+        if (i === 0) {
+          // First command is line spacing
+          result.push({
             type: 'line-spacing',
             value: '24 dots',
-            payload: [0x1b, 0x33, 0x24],
+            payload: Array.from(command),
           });
-
-          columnData.forEach((bytes) => {
-            asyncResult.push({
-              type: 'image',
-              property: 'data',
-              value: 'column',
-              width,
-              height: 24,
-              payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
-            });
-          });
-
-          asyncResult.push({
+        } else if (i === commands.length - 1) {
+          // Last command is line spacing reset
+          result.push({
             type: 'line-spacing',
             value: 'default',
-            payload: [0x1b, 0x32],
+            payload: Array.from(command),
           });
-
-          return asyncResult;
-        });
-      } else {
-        // Use synchronous processing for smaller images
-        result.push({
-          type: 'line-spacing',
-          value: '24 dots',
-          payload: [0x1b, 0x33, 0x24],
-        });
-
-        getColumnData(width, height).forEach((bytes) => {
+        } else {
           result.push({
             type: 'image',
             property: 'data',
             value: 'column',
             width,
             height: 24,
-            payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
+            payload: Array.from(command),
           });
-        });
-
-        result.push({
-          type: 'line-spacing',
-          value: 'default',
-          payload: [0x1b, 0x32],
-        });
-      }
-    }
-
-    /* Encode images with GS v */
-    if (mode == 'raster') {
-      if (isLargeImage) {
-        // Return a Promise for async processing with improved chunk size
-        return getRowDataAsync(width, height, Math.max(20, Math.min(100, Math.floor(5000000 / totalPixels)))).then((bytes) => {
-          return [{
-            type: 'image',
-            command: 'data',
-            value: 'raster',
-            width,
-            height,
-            payload: [
-              0x1d, 0x76, 0x30, 0x00,
-              (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-              height & 0xff, ((height >> 8) & 0xff),
-              ...bytes,
-            ],
-          }];
-        });
-      } else {
-        // Use synchronous processing for smaller images
-        result.push({
-          type: 'image',
-          command: 'data',
-          value: 'raster',
-          width,
-          height,
-          payload: [
-            0x1d, 0x76, 0x30, 0x00,
-            (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-            height & 0xff, ((height >> 8) & 0xff),
-            ...getRowData(width, height),
-          ],
-        });
+        }
       }
     }
 
@@ -934,18 +1615,18 @@ class LanguageStarPrnt {
     const identifier = typeof symbology === 'string' ? symbologies[symbology] : symbology;
 
     result.push(
-      {
-        type: 'barcode',
-        value: { symbology: symbology, data: value, width: options.width, height: options.height, text: options.text },
-        payload: [
-          0x1b, 0x62,
-          identifier,
+        {
+          type: 'barcode',
+          value: {symbology: symbology, data: value, width: options.width, height: options.height, text: options.text},
+          payload: [
+            0x1b, 0x62,
+            identifier,
           options.text ? 0x02 : 0x01,
           options.width,
           options.height,
           ...bytes, 0x1e,
-        ],
-      },
+          ],
+        },
     );
 
     return result;
@@ -969,12 +1650,12 @@ class LanguageStarPrnt {
 
     if (options.model in models) {
       result.push(
-        {
-          type: 'qrcode',
-          property: 'model',
-          value: options.model,
-          payload: [0x1b, 0x1d, 0x79, 0x53, 0x30, models[options.model]],
-        },
+          {
+            type: 'qrcode',
+            property: 'model',
+            value: options.model,
+            payload: [0x1b, 0x1d, 0x79, 0x53, 0x30, models[options.model]],
+          },
       );
     } else {
       throw new Error('Model must be 1 or 2');
@@ -991,12 +1672,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-      {
-        type: 'qrcode',
-        property: 'size',
-        value: options.size,
-        payload: [0x1b, 0x1d, 0x79, 0x53, 0x32, options.size],
-      },
+        {
+          type: 'qrcode',
+          property: 'size',
+          value: options.size,
+          payload: [0x1b, 0x1d, 0x79, 0x53, 0x32, options.size],
+        },
     );
 
     /* Error level */
@@ -1010,12 +1691,12 @@ class LanguageStarPrnt {
 
     if (options.errorlevel in errorlevels) {
       result.push(
-        {
-          type: 'qrcode',
-          property: 'errorlevel',
-          value: options.errorlevel,
-          payload: [0x1b, 0x1d, 0x79, 0x53, 0x31, errorlevels[options.errorlevel]],
-        },
+          {
+            type: 'qrcode',
+            property: 'errorlevel',
+            value: options.errorlevel,
+            payload: [0x1b, 0x1d, 0x79, 0x53, 0x31, errorlevels[options.errorlevel]],
+          },
       );
     } else {
       throw new Error('Error level must be l, m, q or h');
@@ -1027,26 +1708,26 @@ class LanguageStarPrnt {
     const length = bytes.length;
 
     result.push(
-      {
-        type: 'qrcode',
-        property: 'data',
-        value,
-        payload: [
-          0x1b, 0x1d, 0x79, 0x44, 0x31, 0x00,
-          length & 0xff, (length >> 8) & 0xff,
-          ...bytes,
-        ],
-      },
+        {
+          type: 'qrcode',
+          property: 'data',
+          value,
+          payload: [
+            0x1b, 0x1d, 0x79, 0x44, 0x31, 0x00,
+            length & 0xff, (length >> 8) & 0xff,
+            ...bytes,
+          ],
+        },
     );
 
     /* Print QR code */
 
     result.push(
-      {
-        type: 'qrcode',
-        command: 'print',
-        payload: [0x1b, 0x1d, 0x79, 0x50],
-      },
+        {
+          type: 'qrcode',
+          command: 'print',
+          payload: [0x1b, 0x1d, 0x79, 0x50],
+        },
     );
 
     return result;
@@ -1080,11 +1761,11 @@ class LanguageStarPrnt {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        value: `rows: ${options.rows}, columns: ${options.columns}`,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x30, 0x01, options.rows, options.columns],
-      },
+        {
+          type: 'pdf417',
+          value: `rows: ${options.rows}, columns: ${options.columns}`,
+          payload: [0x1b, 0x1d, 0x78, 0x53, 0x30, 0x01, options.rows, options.columns],
+        },
     );
 
     /* Width */
@@ -1098,12 +1779,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'width',
-        value: options.width,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x32, options.width],
-      },
+        {
+          type: 'pdf417',
+          property: 'width',
+          value: options.width,
+          payload: [0x1b, 0x1d, 0x78, 0x53, 0x32, options.width],
+        },
     );
 
     /* Height */
@@ -1117,12 +1798,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'height',
-        value: options.height,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x33, options.height],
-      },
+        {
+          type: 'pdf417',
+          property: 'height',
+          value: options.height,
+          payload: [0x1b, 0x1d, 0x78, 0x53, 0x33, options.height],
+        },
     );
 
     /* Error level */
@@ -1136,12 +1817,12 @@ class LanguageStarPrnt {
     }
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'errorlevel',
-        value: options.errorlevel,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x31, options.errorlevel],
-      },
+        {
+          type: 'pdf417',
+          property: 'errorlevel',
+          value: options.errorlevel,
+          payload: [0x1b, 0x1d, 0x78, 0x53, 0x31, options.errorlevel],
+        },
     );
 
     /* Data */
@@ -1150,26 +1831,26 @@ class LanguageStarPrnt {
     const length = bytes.length;
 
     result.push(
-      {
-        type: 'pdf417',
-        property: 'data',
-        value,
-        payload: [
-          0x1b, 0x1d, 0x78, 0x44,
-          length & 0xff, (length >> 8) & 0xff,
-          ...bytes,
-        ],
-      },
+        {
+          type: 'pdf417',
+          property: 'data',
+          value,
+          payload: [
+            0x1b, 0x1d, 0x78, 0x44,
+            length & 0xff, (length >> 8) & 0xff,
+            ...bytes,
+          ],
+        },
     );
 
     /* Print PDF417 code */
 
     result.push(
-      {
-        type: 'pdf417',
-        command: 'print',
-        payload: [0x1b, 0x1d, 0x78, 0x50],
-      },
+        {
+          type: 'pdf417',
+          command: 'print',
+          payload: [0x1b, 0x1d, 0x78, 0x50],
+        },
     );
 
     return result;
@@ -1180,211 +1861,101 @@ class LanguageStarPrnt {
      * @param {ImageData} image     ImageData object
      * @param {number} width        Width of the image
      * @param {number} height       Height of the image
+     * @param {Object} [options]    Additional options
+     * @param {boolean} [options.supportsCompression=false] Use compression if supported (Star-specific)
      * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
      */
-  image(image, width, height) {
-    const result = [];
-
-    // Improved getPixel with bounds checking and proper undefined handling
-    const getPixel = (x, y) => {
-      if (x >= width || y >= height || x < 0 || y < 0) return 0;
-      const index = ((width * y) + x) * 4;
-      return (typeof image.data[index] === 'undefined' || image.data[index] > 0) ? 0 : 1;
-    };
-
-    // Optimized synchronous processing
-    const processImageSync = () => {
-      const totalSegments = Math.ceil(height / 24);
-
-      for (let s = 0; s < totalSegments; s++) {
-        const y = s * 24;
-        const bytes = new Uint8Array(width * 3);
-
-        // Process each column (x coordinate)
-        for (let x = 0; x < width; x++) {
-          const i = x * 3;
-
-          // Pack 8 pixels into each byte using bitwise operations
-          bytes[i] =
-            getPixel(x, y + 0) << 7 |
-            getPixel(x, y + 1) << 6 |
-            getPixel(x, y + 2) << 5 |
-            getPixel(x, y + 3) << 4 |
-            getPixel(x, y + 4) << 3 |
-            getPixel(x, y + 5) << 2 |
-            getPixel(x, y + 6) << 1 |
-            getPixel(x, y + 7);
-
-          bytes[i + 1] =
-            getPixel(x, y + 8) << 7 |
-            getPixel(x, y + 9) << 6 |
-            getPixel(x, y + 10) << 5 |
-            getPixel(x, y + 11) << 4 |
-            getPixel(x, y + 12) << 3 |
-            getPixel(x, y + 13) << 2 |
-            getPixel(x, y + 14) << 1 |
-            getPixel(x, y + 15);
-
-          bytes[i + 2] =
-            getPixel(x, y + 16) << 7 |
-            getPixel(x, y + 17) << 6 |
-            getPixel(x, y + 18) << 5 |
-            getPixel(x, y + 19) << 4 |
-            getPixel(x, y + 20) << 3 |
-            getPixel(x, y + 21) << 2 |
-            getPixel(x, y + 22) << 1 |
-            getPixel(x, y + 23);
-        }
-
-        result.push({
-          type: 'image',
-          property: 'data',
-          value: 'column',
-          width,
-          height: 24,
-          payload: [
-            0x1b, 0x58,
-            width & 0xff, (width >> 8) & 0xff,
-            ...bytes,
-            0x0a, 0x0d,
-          ],
-        });
-      }
-
-      return result;
-    };
-
-    // Significantly improved async processing
-    const processImageAsync = (chunkSize = 3) => {
-      return new Promise((resolve, reject) => {
-        const asyncResult = [];
-        const totalSegments = Math.ceil(height / 24);
-        let currentSegment = 0;
-        let isProcessing = false;
-
-        const processChunk = async () => {
-          if (isProcessing) return; // Prevent concurrent execution
-          isProcessing = true;
-
-          try {
-            // Adaptive chunk size based on image dimensions
-            const adaptiveChunkSize = Math.max(1, Math.min(chunkSize, Math.floor(200000 / width)));
-            const endSegment = Math.min(currentSegment + adaptiveChunkSize, totalSegments);
-
-            for (let s = currentSegment; s < endSegment; s++) {
-              const y = s * 24;
-              const bytes = new Uint8Array(width * 3);
-
-              // Process pixels with periodic yielding
-              for (let x = 0; x < width; x++) {
-                const i = x * 3;
-
-                // Pack 8 pixels into each byte
-                bytes[i] =
-                  getPixel(x, y + 0) << 7 |
-                  getPixel(x, y + 1) << 6 |
-                  getPixel(x, y + 2) << 5 |
-                  getPixel(x, y + 3) << 4 |
-                  getPixel(x, y + 4) << 3 |
-                  getPixel(x, y + 5) << 2 |
-                  getPixel(x, y + 6) << 1 |
-                  getPixel(x, y + 7);
-
-                bytes[i + 1] =
-                  getPixel(x, y + 8) << 7 |
-                  getPixel(x, y + 9) << 6 |
-                  getPixel(x, y + 10) << 5 |
-                  getPixel(x, y + 11) << 4 |
-                  getPixel(x, y + 12) << 3 |
-                  getPixel(x, y + 13) << 2 |
-                  getPixel(x, y + 14) << 1 |
-                  getPixel(x, y + 15);
-
-                bytes[i + 2] =
-                  getPixel(x, y + 16) << 7 |
-                  getPixel(x, y + 17) << 6 |
-                  getPixel(x, y + 18) << 5 |
-                  getPixel(x, y + 19) << 4 |
-                  getPixel(x, y + 20) << 3 |
-                  getPixel(x, y + 21) << 2 |
-                  getPixel(x, y + 22) << 1 |
-                  getPixel(x, y + 23);
-
-                // Yield control every 64 pixels to prevent blocking
-                if (x % 64 === 0 && x > 0) {
-                  await new Promise(resolve => setTimeout(resolve, 0));
-                }
-              }
-
-              asyncResult.push({
-                type: 'image',
-                property: 'data',
-                value: 'column',
-                width,
-                height: 24,
-                payload: [
-                  0x1b, 0x58,
-                  width & 0xff, (width >> 8) & 0xff,
-                  ...bytes,
-                  0x0a, 0x0d,
-                ],
-              });
-            }
-
-            currentSegment = endSegment;
-            isProcessing = false;
-
-            if (currentSegment < totalSegments) {
-              // Use requestIdleCallback for better CPU scheduling
-              if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(processChunk, { timeout: 100 });
-              } else {
-                // Use longer delay for better responsiveness
-                setTimeout(processChunk, 16); // ~60fps frame time
-              }
-            } else {
-              resolve(asyncResult);
-            }
-          } catch (error) {
-            isProcessing = false;
-            reject(error);
-          }
-        };
-
-        processChunk();
-      });
-    };
-
-    // Enhanced processing decision logic
+  image(image, width, height, options = {}) {
+    // Size thresholds for async processing
     const totalPixels = width * height;
-    const memoryFootprint = width * Math.ceil(height / 24) * 3; // Approximate memory usage
-
-    // More sophisticated thresholds
-    const isLargeImage = totalPixels > 250000; // Lowered threshold
-    const isWideImage = width > 800; // Wide images need more careful handling
-    const isHighMemoryUsage = memoryFootprint > 500000; // ~500KB threshold
-
-    // Use async processing for large, wide, or memory-intensive images
+    const memoryFootprint = width * Math.ceil(height / 24) * 3;
+    const isLargeImage = totalPixels > 250000;
+    const isWideImage = width > 800;
+    const isHighMemoryUsage = memoryFootprint > 500000;
     const shouldUseAsync = isLargeImage || isWideImage || isHighMemoryUsage;
 
     if (shouldUseAsync) {
-      // Calculate optimal chunk size based on image characteristics
-      let optimalChunkSize;
+      return this._processImageAsync(image, width, height);
+    }
 
-      if (width > 1000) {
-        optimalChunkSize = 1; // Very wide images: process one segment at a time
-      } else if (totalPixels > 1000000) {
-        optimalChunkSize = 2; // Very large images: small chunks
-      } else if (totalPixels > 500000) {
-        optimalChunkSize = 3; // Large images: medium chunks
-      } else {
-        optimalChunkSize = 5; // Moderately large images: larger chunks
+    return this._processImageSync(image, width, height);
+  }
+
+  /**
+   * Process image synchronously (for smaller images)
+   * @param {ImageData} image - Image data object
+   * @param {number} width - Image width
+   * @param {number} height - Image height
+   * @return {Array} Array of command objects
+   * @private
+   */
+  _processImageSync(image, width, height) {
+    const result = [];
+    const strips = ImageEncoder.pixelsToColumns(image, width, height);
+
+    for (const stripData of strips) {
+      const command = ImageEncoder.buildStarColumnCommand(stripData, width);
+      result.push({
+        type: 'image',
+        property: 'data',
+        value: 'column',
+        width,
+        height: 24,
+        payload: Array.from(command),
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Process image asynchronously (for larger images)
+   * Prevents UI blocking and reduces memory pressure
+   * @param {ImageData} image - Image data object
+   * @param {number} width - Image width
+   * @param {number} height - Image height
+   * @return {Promise<Array>} Promise resolving to array of command objects
+   * @private
+   */
+  async _processImageAsync(image, width, height) {
+    // Process image in column strips asynchronously
+    const result = [];
+    const totalStrips = Math.ceil(height / 24);
+
+    for (let s = 0; s < totalStrips; s++) {
+      const stripY = s * 24;
+      const bytesPerStrip = width * 3;
+      const strip = new Uint8Array(bytesPerStrip);
+
+      for (let x = 0; x < width; x++) {
+        const offset = x * 3;
+
+        for (let c = 0; c < 3; c++) {
+          let byte = 0;
+          for (let b = 0; b < 8; b++) {
+            byte |= ImageEncoder.getPixel(image, x, stripY + (c * 8) + b, width, height) << (7 - b);
+          }
+          strip[offset + c] = byte;
+        }
+
+        // Yield control periodically to prevent blocking
+        if (x % 100 === 0 && x > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
       }
 
-      return processImageAsync(optimalChunkSize);
-    } else {
-      return processImageSync();
+      const starCommand = ImageEncoder.buildStarColumnCommand(strip, width);
+      result.push({
+        type: 'image',
+        property: 'data',
+        value: 'column',
+        width,
+        height: 24,
+        payload: Array.from(starCommand),
+      });
     }
+
+    return result;
   }
 
   /**
@@ -2299,39 +2870,39 @@ codepageMappings['star-line'] = codepageMappings['star-prnt'];
 codepageMappings['esc-pos']['zijang'] = codepageMappings['esc-pos']['pos-5890'];
 
 const printerDefinitions = {
-	'bixolon-srp350': {vendor:'Bixolon',model:'SRP-350',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'bixolon/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4}}},
-	'bixolon-srp350iii': {vendor:'Bixolon',model:'SRP-350III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'bixolon',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56},C:{size:'9x24',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'citizen-ct-s310ii': {vendor:'Citizen',model:'CT-S310II',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'citizen',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64},C:{size:'8x16',columns:72}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'epson-tm-m30ii': {vendor:'Epson',model:'TM-m30II',interfaces:{usb:{productName:'TM-m30II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-m30iii': {vendor:'Epson',model:'TM-m30III',interfaces:{usb:{productName:'TM-m30III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-p20ii': {vendor:'Epson',model:'TM-P20II',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42},D:{size:'10x24',columns:38},E:{size:'8x16',columns:48}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:3}}},
-	'epson-tm-t20ii': {vendor:'Epson',model:'TM-T20II',interfaces:{usb:{productName:'TM-T20II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t20iii': {vendor:'Epson',model:'TM-T20III',interfaces:{usb:{productName:'TM-T20III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t20iv': {vendor:'Epson',model:'TM-T20IV',interfaces:{usb:{productName:'TM-T20IV'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t70': {vendor:'Epson',model:'TM-T70',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:4}}},
-	'epson-tm-t70ii': {vendor:'Epson',model:'TM-T70II','interface':{usb:{productName:'TM-T70II'}},media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:4}}},
-	'epson-tm-t88ii': {vendor:'Epson',model:'TM-T88II',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88iii': {vendor:'Epson',model:'TM-T88III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88iv': {vendor:'Epson',model:'TM-T88IV',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88v': {vendor:'Epson',model:'TM-T88V',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88vi': {vendor:'Epson',model:'TM-T88VI',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88vii': {vendor:'Epson',model:'TM-T88VII',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'fujitsu-fp1000': {vendor:'Fujitsu',model:'FP-1000',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'fujitsu',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:56},C:{size:'8x16',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:false},cutter:{feed:4}}},
-	'hp-a779': {vendor:'HP',model:'A779',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'hp',newline:'\n',fonts:{A:{size:'12x24',columns:44}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:false,fallback:{type:'barcode',symbology:75}},cutter:{feed:4}}},
-	'metapace-t1': {vendor:'Metapace',model:'T-1',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'metapace',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4}}},
-	'mpt-ii': {vendor:'',model:'MPT-II',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'mpt',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64},C:{size:'0x0',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:[]},pdf417:{supported:false}}},
-	'pos-5890': {vendor:'',model:'POS-5890',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'pos-5890',fonts:{A:{size:'12x24',columns:32},B:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:1}}},
-	'pos-8360': {vendor:'',model:'POS-8360',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'pos-8360',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:4}}},
-	'star-mc-print2': {vendor:'Star',model:'mC-Print2',interfaces:{usb:{productName:'mC-Print2'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'star-mpop': {vendor:'Star',model:'mPOP',interfaces:{usb:{productName:'mPOP'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'star-sm-l200': {vendor:'Star',model:'SM-L200',media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true}}},
-	'star-tsp100iii': {vendor:'Star',model:'TSP100III',media:{dpi:203,width:80},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'star-tsp100iv': {vendor:'Star',model:'TSP100IV',media:{dpi:203,width:80},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'star-tsp650': {vendor:'Star',model:'TSP650',media:{dpi:203,width:80},capabilities:{language:'star-line',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:3}}},
-	'star-tsp650ii': {vendor:'Star',model:'TSP650II',media:{dpi:203,width:80},capabilities:{language:'star-line',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'xprinter-xp-n160ii': {vendor:'Xprinter',model:'XP-N160II',interfaces:{usb:{productName:'Printer-80\u0000'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'xprinter',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'xprinter-xp-t80q': {vendor:'Xprinter',model:'XP-T80Q',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'xprinter',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'youku-58t': {vendor:'Youku',model:'58T',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'youku',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:false}}},
+	'bixolon-srp350': {vendor:'Bixolon',model:'SRP-350',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'bixolon/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4},images:{supportsCompression:false}}},
+	'bixolon-srp350iii': {vendor:'Bixolon',model:'SRP-350III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'bixolon',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56},C:{size:'9x24',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'citizen-ct-s310ii': {vendor:'Citizen',model:'CT-S310II',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'citizen',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64},C:{size:'8x16',columns:72}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3},images:{supportsCompression:true}}},
+	'epson-tm-m30ii': {vendor:'Epson',model:'TM-m30II',interfaces:{usb:{productName:'TM-m30II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'epson-tm-m30iii': {vendor:'Epson',model:'TM-m30III',interfaces:{usb:{productName:'TM-m30III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'epson-tm-p20ii': {vendor:'Epson',model:'TM-P20II',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42},D:{size:'10x24',columns:38},E:{size:'8x16',columns:48}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster',supportsCompression:true},cutter:{feed:3}}},
+	'epson-tm-t20ii': {vendor:'Epson',model:'TM-T20II',interfaces:{usb:{productName:'TM-T20II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:false}}},
+	'epson-tm-t20iii': {vendor:'Epson',model:'TM-T20III',interfaces:{usb:{productName:'TM-T20III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'epson-tm-t20iv': {vendor:'Epson',model:'TM-T20IV',interfaces:{usb:{productName:'TM-T20IV'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'epson-tm-t70': {vendor:'Epson',model:'TM-T70',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster',supportsCompression:false},cutter:{feed:4}}},
+	'epson-tm-t70ii': {vendor:'Epson',model:'TM-T70II','interface':{usb:{productName:'TM-T70II'}},media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster',supportsCompression:true},cutter:{feed:4}}},
+	'epson-tm-t88ii': {vendor:'Epson',model:'TM-T88II',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:false}}},
+	'epson-tm-t88iii': {vendor:'Epson',model:'TM-T88III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:false}}},
+	'epson-tm-t88iv': {vendor:'Epson',model:'TM-T88IV',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:false}}},
+	'epson-tm-t88v': {vendor:'Epson',model:'TM-T88V',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'epson-tm-t88vi': {vendor:'Epson',model:'TM-T88VI',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'epson-tm-t88vii': {vendor:'Epson',model:'TM-T88VII',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:true}}},
+	'fujitsu-fp1000': {vendor:'Fujitsu',model:'FP-1000',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'fujitsu',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:56},C:{size:'8x16',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:false},cutter:{feed:4},images:{supportsCompression:true}}},
+	'hp-a779': {vendor:'HP',model:'A779',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'hp',newline:'\n',fonts:{A:{size:'12x24',columns:44}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:false,fallback:{type:'barcode',symbology:75}},cutter:{feed:4},images:{supportsCompression:true}}},
+	'metapace-t1': {vendor:'Metapace',model:'T-1',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'metapace',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4},images:{supportsCompression:false}}},
+	'mpt-ii': {vendor:'',model:'MPT-II',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'mpt',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64},C:{size:'0x0',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:[]},pdf417:{supported:false},images:{supportsCompression:false}}},
+	'pos-5890': {vendor:'',model:'POS-5890',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'pos-5890',fonts:{A:{size:'12x24',columns:32},B:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{mode:'raster',supportsCompression:false},cutter:{feed:1}}},
+	'pos-8360': {vendor:'',model:'POS-8360',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'pos-8360',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{mode:'raster',supportsCompression:false},cutter:{feed:4}}},
+	'star-mc-print2': {vendor:'Star',model:'mC-Print2',interfaces:{usb:{productName:'mC-Print2'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3},images:{supportsCompression:false}}},
+	'star-mpop': {vendor:'Star',model:'mPOP',interfaces:{usb:{productName:'mPOP'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3},images:{supportsCompression:false}}},
+	'star-sm-l200': {vendor:'Star',model:'SM-L200',media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{supportsCompression:false}}},
+	'star-tsp100iii': {vendor:'Star',model:'TSP100III',media:{dpi:203,width:80},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3},images:{supportsCompression:false}}},
+	'star-tsp100iv': {vendor:'Star',model:'TSP100IV',media:{dpi:203,width:80},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3},images:{supportsCompression:false}}},
+	'star-tsp650': {vendor:'Star',model:'TSP650',media:{dpi:203,width:80},capabilities:{language:'star-line',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:3},images:{supportsCompression:false}}},
+	'star-tsp650ii': {vendor:'Star',model:'TSP650II',media:{dpi:203,width:80},capabilities:{language:'star-line',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3},images:{supportsCompression:false}}},
+	'xprinter-xp-n160ii': {vendor:'Xprinter',model:'XP-N160II',interfaces:{usb:{productName:'Printer-80\u0000'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'xprinter',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:false}}},
+	'xprinter-xp-t80q': {vendor:'Xprinter',model:'XP-T80Q',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'xprinter',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},cutter:{feed:4},images:{supportsCompression:false}}},
+	'youku-58t': {vendor:'Youku',model:'58T',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'youku',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:false},images:{supportsCompression:false}}},
 };
 
 /**
@@ -2346,8 +2917,8 @@ class ReceiptPrinterEncoder {
 
   #printerCapabilities = {
     'fonts': {
-      'A': { size: '12x24', columns: 42 },
-      'B': { size: '9x24', columns: 56 },
+      'A': {size: '12x24', columns: 42},
+      'B': {size: '9x24', columns: 56},
     },
     'barcodes': {
       'supported': true,
@@ -2482,8 +3053,8 @@ class ReceiptPrinterEncoder {
       }
 
       this.#codepageMapping = Object.fromEntries(codepageMappings[this.#options.language][this.#options.codepageMapping]
-        .map((v, i) => [v, i])
-        .filter((i) => i));
+          .map((v, i) => [v, i])
+          .filter((i) => i));
     } else {
       this.#codepageMapping = this.#options.codepageMapping;
     }
@@ -2530,7 +3101,7 @@ class ReceiptPrinterEncoder {
     }
 
     this.#composer.add(
-      this.#language.initialize(),
+        this.#language.initialize(),
     );
 
     return this;
@@ -2586,7 +3157,7 @@ class ReceiptPrinterEncoder {
     value = parseInt(value, 10) || 1;
 
     for (let i = 0; i < value; i++) {
-      this.#composer.flush({ forceNewline: true });
+      this.#composer.flush({forceNewline: true});
     }
 
     return this;
@@ -2784,7 +3355,7 @@ class ReceiptPrinterEncoder {
     /* Change the font */
 
     this.#composer.add(
-      this.#language.font(value),
+        this.#language.font(value),
     );
 
     this.#state.font = value;
@@ -2882,7 +3453,7 @@ class ReceiptPrinterEncoder {
             verticalAlign = columns[c].verticalAlign;
           }
 
-          const line = { commands: [{ type: 'space', size: columns[c].width }], height: 1 };
+          const line = {commands: [{type: 'space', size: columns[c].width}], height: 1};
 
           if (verticalAlign == 'bottom') {
             lines[c].unshift(line);
@@ -2932,7 +3503,7 @@ class ReceiptPrinterEncoder {
     this.#composer.flush();
 
     this.#composer.text((options.style === 'double' ? '═' : '─').repeat(options.width), 'cp437');
-    this.#composer.flush({ forceNewline: true });
+    this.#composer.flush({forceNewline: true});
 
     return this;
   }
@@ -3021,7 +3592,7 @@ class ReceiptPrinterEncoder {
 
       this.#composer.space(options.paddingLeft);
       this.#composer.add(lines[i].commands,
-        options.width - (options.style == 'none' ? 0 : 2) - options.paddingLeft - options.paddingRight);
+          options.width - (options.style == 'none' ? 0 : 2) - options.paddingLeft - options.paddingRight);
       this.#composer.space(options.paddingRight);
 
       if (options.style != 'none') {
@@ -3086,7 +3657,7 @@ class ReceiptPrinterEncoder {
 
     /* Force printing the print buffer and moving to a new line */
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     /* Set alignment */
 
@@ -3097,7 +3668,7 @@ class ReceiptPrinterEncoder {
     /* Barcode */
 
     this.#composer.add(
-      this.#language.barcode(value, symbology, options),
+        this.#language.barcode(value, symbology, options),
     );
 
     /* Reset alignment */
@@ -3106,7 +3677,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -3159,7 +3730,7 @@ class ReceiptPrinterEncoder {
 
     /* Force printing the print buffer and moving to a new line */
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     /* Set alignment */
 
@@ -3170,7 +3741,7 @@ class ReceiptPrinterEncoder {
     /* QR code */
 
     this.#composer.add(
-      this.#language.qrcode(value, options),
+        this.#language.qrcode(value, options),
     );
 
     /* Reset alignment */
@@ -3179,7 +3750,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -3219,7 +3790,7 @@ class ReceiptPrinterEncoder {
 
     /* Force printing the print buffer and moving to a new line */
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     /* Set alignment */
 
@@ -3230,7 +3801,7 @@ class ReceiptPrinterEncoder {
     /* PDF417 code */
 
     this.#composer.add(
-      this.#language.pdf417(value, options),
+        this.#language.pdf417(value, options),
     );
 
     /* Reset alignment */
@@ -3239,7 +3810,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -3259,23 +3830,22 @@ class ReceiptPrinterEncoder {
       throw new Error('Images are not supported in table cells or boxes');
     }
 
-    // if (width % 8 !== 0) {
-    //   throw new Error('Width must be a multiple of 8');
-    // }
+    // Validate input has required properties
+    if (!input || !input.data || typeof input.width !== 'number' || typeof input.height !== 'number') {
+      throw new Error('Invalid image input: must have data, width, and height properties');
+    }
 
-    // if (height % 8 !== 0) {
-    //   throw new Error('Height must be a multiple of 8');
-    // }
-
+    // Use input directly instead of copying to reduce memory usage
+    // The ImageEncoder will handle the data immutably
     const image = {
-      data: new Uint8ClampedArray(input.data),
+      data: input.data, // Direct reference, no copy
       height: input.height,
       width: input.width,
       colorSpace: input.colorSpace,
       pixelFormat: input.pixelFormat,
     };
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     /* Set alignment */
 
@@ -3283,9 +3853,17 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align(this.#composer.align));
     }
 
-    /* Encode the image data */
+    /* Determine if compression should be used based on printer capabilities */
+    const supportsCompression = this.#printerCapabilities?.images?.supportsCompression ?? false;
 
-    const imageResult = this.#language.image(image, width, height, this.#options.imageMode);
+    /* Encode the image data */
+    const imageResult = this.#language.image(
+        image,
+        width,
+        height,
+        this.#options.imageMode,
+        {supportsCompression},
+    );
 
     // Wait for the result if it's a Promise (async processing for large images)
     const encodedImage = await Promise.resolve(imageResult);
@@ -3297,7 +3875,7 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align('left'));
     }
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -3315,16 +3893,16 @@ class ReceiptPrinterEncoder {
     }
 
     for (let i = 0; i < this.#options.feedBeforeCut; i++) {
-      this.#composer.flush({ forceNewline: true });
+      this.#composer.flush({forceNewline: true});
     }
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     this.#composer.add(
-      this.#language.cut(value),
+        this.#language.cut(value),
     );
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -3343,13 +3921,13 @@ class ReceiptPrinterEncoder {
       throw new Error('Pulse is not supported in table cells or boxes');
     }
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     this.#composer.add(
-      this.#language.pulse(device, on, off),
+        this.#language.pulse(device, on, off),
     );
 
-    this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -3406,7 +3984,7 @@ class ReceiptPrinterEncoder {
       const fragment = CodepageEncoder.encode(value, 'ascii');
 
       return [
-        { type: 'text', payload: [...fragment] },
+        {type: 'text', payload: [...fragment]},
       ];
     }
 
@@ -3417,13 +3995,13 @@ class ReceiptPrinterEncoder {
         this.#state.codepage = this.#codepageMapping[codepage];
 
         return [
-          { type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[codepage]) },
-          { type: 'text', payload: [...fragment] },
+          {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[codepage])},
+          {type: 'text', payload: [...fragment]},
         ];
       }
 
       return [
-        { type: 'text', payload: [...fragment] },
+        {type: 'text', payload: [...fragment]},
       ];
     }
 
@@ -3433,8 +4011,8 @@ class ReceiptPrinterEncoder {
     for (const fragment of fragments) {
       this.#state.codepage = this.#codepageMapping[fragment.codepage];
       buffer.push(
-        { type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage]) },
-        { type: 'text', payload: [...fragment.bytes] },
+          {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage])},
+          {type: 'text', payload: [...fragment.bytes]},
       );
     }
 
@@ -3451,10 +4029,10 @@ class ReceiptPrinterEncoder {
 
     /* Determine if the last command is a pulse or cut, the we do not need a flush */
 
-    let lastLine = this.#queue[this.#queue.length - 1];
+    const lastLine = this.#queue[this.#queue.length - 1];
 
     if (lastLine) {
-      let lastCommand = lastLine[lastLine.length - 1];
+      const lastCommand = lastLine[lastLine.length - 1];
 
       if (lastCommand && ['pulse', 'cut'].includes(lastCommand.type)) {
         requiresFlush = false;
@@ -3465,7 +4043,7 @@ class ReceiptPrinterEncoder {
 
     if (requiresFlush && this.#options.autoFlush && !this.#options.embedded) {
       this.#composer.add(
-        this.#language.flush(),
+          this.#language.flush(),
       );
     }
 
@@ -3473,7 +4051,7 @@ class ReceiptPrinterEncoder {
 
     const result = [];
 
-    const remaining = this.#composer.fetch({ forceFlush: true, ignoreAlignment: true });
+    const remaining = this.#composer.fetch({forceFlush: true, ignoreAlignment: true});
 
     if (remaining.length) {
       this.#queue.push(remaining);
@@ -3484,9 +4062,9 @@ class ReceiptPrinterEncoder {
     while (this.#queue.length) {
       const line = this.#queue.shift();
       const height = line
-        .filter((i) => i.type === 'style' && i.property === 'size')
-        .map((i) => i.value.height)
-        .reduce((a, b) => Math.max(a, b), 1);
+          .filter((i) => i.type === 'style' && i.property === 'size')
+          .map((i) => i.value.height)
+          .reduce((a, b) => Math.max(a, b), 1);
 
       if (this.#options.debug) {
         console.log('|' + line.filter((i) => i.type === 'text').map((i) => i.value).join('') + '|', height);
@@ -3534,7 +4112,7 @@ class ReceiptPrinterEncoder {
         if (item.type === 'text') {
           buffer.push(...this.#encodeText(item.value, item.codepage));
         } else if (item.type === 'style') {
-          buffer.push(Object.assign(item, { payload: this.#encodeStyle(item.property, item.value) }));
+          buffer.push(Object.assign(item, {payload: this.#encodeStyle(item.property, item.value)}));
         } else if (item.value || item.payload) {
           buffer.push(item);
         }
@@ -3577,6 +4155,63 @@ class ReceiptPrinterEncoder {
   }
 
   /**
+   * Encode all previous commands and return an async iterator for streaming transmission
+   * This method enables backpressure-aware transmission to printers with limited buffers.
+   *
+   * @param {Object} [options] - Streaming options
+   * @param {number} [options.chunkSize=512] - Size of each chunk in bytes (default optimized for printer buffers)
+   * @param {Function} [options.onChunkSent] - Callback invoked after each chunk is yielded.
+   *   Receives: { index: number, total: number, bytes: number, bytesSent: number, totalBytes: number }
+   *   Return a Promise to implement backpressure (e.g., wait for printer acknowledgment)
+   * @yields {Uint8Array} Chunks of encoded data for transmission
+   * @example
+   * // Basic usage with backpressure
+   * for await (const chunk of encoder.encodeAsyncIterator({
+   *   chunkSize: 256,
+   *   onChunkSent: async (info) => {
+   *     console.log(`Sent chunk ${info.index + 1}/${info.total}`);
+   *     await sendToPort(chunk);
+   *     await delay(10); // Give printer time to process
+   *   }
+   * })) {
+   *   await sendToPort(chunk);
+   * }
+   */
+  async* encodeAsyncIterator(options = {}) {
+    const {chunkSize = ImageEncoder.DEFAULT_CHUNK_SIZE, onChunkSent} = options;
+
+    // Get the complete encoded data
+    const fullData = this.encode();
+
+    if (fullData.length === 0) {
+      return;
+    }
+
+    // Use ImageEncoder's chunking infrastructure for consistency
+    const chunksGenerator = ImageEncoder.generateChunks(fullData, chunkSize);
+
+    for (const chunkInfo of chunksGenerator) {
+      // Yield the chunk
+      yield chunkInfo.chunk;
+
+      // Call callback if provided (enables backpressure)
+      if (onChunkSent) {
+        const callbackInfo = {
+          index: chunkInfo.index,
+          total: chunkInfo.total,
+          bytes: chunkInfo.chunk.length,
+          bytesSent: chunkInfo.byteOffset + chunkInfo.chunk.length,
+          totalBytes: chunkInfo.totalBytes,
+          isLast: chunkInfo.isLast,
+        };
+
+        // Await the callback to enable backpressure
+        await Promise.resolve(onChunkSent(callbackInfo));
+      }
+    }
+  }
+
+  /**
    * Throw an error
    *
    * @param  {string}          message  The error message
@@ -3601,7 +4236,7 @@ class ReceiptPrinterEncoder {
    * @return {object}         An object with all supported printer models
    */
   static get printerModels() {
-    return Object.entries(printerDefinitions).map((i) => ({ id: i[0], name: i[1].vendor + ' ' + i[1].model }));
+    return Object.entries(printerDefinitions).map((i) => ({id: i[0], name: i[1].vendor + ' ' + i[1].model}));
   }
 
   /**

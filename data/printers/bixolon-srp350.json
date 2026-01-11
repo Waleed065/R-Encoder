@@ -1,16 +1,13 @@
 {
     "vendor": "Bixolon",
     "model": "SRP-350",
-    
     "media": {
         "dpi": 180,
         "width": 80
     },
-
     "capabilities": {
         "language": "esc-pos",
         "codepages": "bixolon/legacy",
-
         "fonts": {
             "A": {
                 "size": "12x24",
@@ -21,11 +18,17 @@
                 "columns": 56
             }
         },
-        
         "barcodes": {
             "supported": true,
             "symbologies": [
-                "upca", "upce", "ean13", "ean8", "code39", "itf", "codabar", "code93", 
+                "upca",
+                "upce",
+                "ean13",
+                "ean8",
+                "code39",
+                "itf",
+                "codabar",
+                "code93",
                 "code128"
             ]
         },
@@ -36,9 +39,11 @@
         "pdf417": {
             "supported": false
         },
-        
         "cutter": {
             "feed": 4
+        },
+        "images": {
+            "supportsCompression": false
         }
     }
 }

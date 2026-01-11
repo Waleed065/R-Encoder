@@ -1,16 +1,13 @@
 {
     "vendor": "Star",
     "model": "SM-L200",
-    
     "media": {
         "dpi": 203,
         "width": 58
     },
-
     "capabilities": {
         "language": "star-prnt",
         "codepages": "star",
-
         "fonts": {
             "A": {
                 "size": "12x24",
@@ -25,20 +22,30 @@
                 "columns": 42
             }
         },
-        
         "barcodes": {
             "supported": true,
             "symbologies": [
-                "upca", "upce", "ean13", "ean8", "itf", "codabar", "code93", 
+                "upca",
+                "upce",
+                "ean13",
+                "ean8",
+                "itf",
+                "codabar",
+                "code93",
                 "code128"
             ]
         },
         "qrcode": {
             "supported": true,
-            "models": ["2"]
+            "models": [
+                "2"
+            ]
         },
         "pdf417": {
             "supported": true
+        },
+        "images": {
+            "supportsCompression": false
         }
     }
 }

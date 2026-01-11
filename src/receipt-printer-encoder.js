@@ -2,6 +2,7 @@ import CodepageEncoder from '@point-of-sale/codepage-encoder';
 
 /* Import local dependencies */
 
+import ImageEncoder from './image-encoder.js';
 import LanguageEscPos from './languages/esc-pos.js';
 import LanguageStarPrnt from './languages/star-prnt.js';
 import LineComposer from './line-composer.js';
@@ -937,21 +938,20 @@ class ReceiptPrinterEncoder {
       throw new Error('Images are not supported in table cells or boxes');
     }
 
-    // if (width % 8 !== 0) {
-    //   throw new Error('Width must be a multiple of 8');
-    // }
+    // Validate input has required properties
+    if (!input || !input.data || typeof input.width !== 'number' || typeof input.height !== 'number') {
+      throw new Error('Invalid image input: must have data, width, and height properties');
+    }
 
-    // if (height % 8 !== 0) {
-    //   throw new Error('Height must be a multiple of 8');
-    // }
-
+    // Use input directly instead of copying to reduce memory usage
+    // The ImageEncoder will handle the data immutably
     const image = {
-      data: new Uint8ClampedArray(input.data),
+      data: input.data, // Direct reference, no copy
       height: input.height,
       width: input.width,
       colorSpace: input.colorSpace,
       pixelFormat: input.pixelFormat,
-    }
+    };
 
     this.#composer.flush({ forceFlush: true, ignoreAlignment: true });
 
@@ -961,9 +961,17 @@ class ReceiptPrinterEncoder {
       this.#composer.add(this.#language.align(this.#composer.align));
     }
 
-    /* Encode the image data */
+    /* Determine if compression should be used based on printer capabilities */
+    const supportsCompression = this.#printerCapabilities?.images?.supportsCompression ?? false;
 
-    const imageResult = this.#language.image(image, width, height, this.#options.imageMode);
+    /* Encode the image data */
+    const imageResult = this.#language.image(
+      image,
+      width,
+      height,
+      this.#options.imageMode,
+      { supportsCompression },
+    );
 
     // Wait for the result if it's a Promise (async processing for large images)
     const encodedImage = await Promise.resolve(imageResult);
@@ -1129,10 +1137,10 @@ class ReceiptPrinterEncoder {
 
     /* Determine if the last command is a pulse or cut, the we do not need a flush */
 
-    let lastLine = this.#queue[this.#queue.length - 1];
+    const lastLine = this.#queue[this.#queue.length - 1];
 
     if (lastLine) {
-      let lastCommand = lastLine[lastLine.length - 1];
+      const lastCommand = lastLine[lastLine.length - 1];
 
       if (lastCommand && ['pulse', 'cut'].includes(lastCommand.type)) {
         requiresFlush = false;
@@ -1252,6 +1260,63 @@ class ReceiptPrinterEncoder {
     }
 
     return Uint8Array.from(result);
+  }
+
+  /**
+   * Encode all previous commands and return an async iterator for streaming transmission
+   * This method enables backpressure-aware transmission to printers with limited buffers.
+   *
+   * @param {Object} [options] - Streaming options
+   * @param {number} [options.chunkSize=512] - Size of each chunk in bytes (default optimized for printer buffers)
+   * @param {Function} [options.onChunkSent] - Callback invoked after each chunk is yielded.
+   *   Receives: { index: number, total: number, bytes: number, bytesSent: number, totalBytes: number }
+   *   Return a Promise to implement backpressure (e.g., wait for printer acknowledgment)
+   * @yields {Uint8Array} Chunks of encoded data for transmission
+   * @example
+   * // Basic usage with backpressure
+   * for await (const chunk of encoder.encodeAsyncIterator({
+   *   chunkSize: 256,
+   *   onChunkSent: async (info) => {
+   *     console.log(`Sent chunk ${info.index + 1}/${info.total}`);
+   *     await sendToPort(chunk);
+   *     await delay(10); // Give printer time to process
+   *   }
+   * })) {
+   *   await sendToPort(chunk);
+   * }
+   */
+  async* encodeAsyncIterator(options = {}) {
+    const { chunkSize = ImageEncoder.DEFAULT_CHUNK_SIZE, onChunkSent } = options;
+
+    // Get the complete encoded data
+    const fullData = this.encode();
+
+    if (fullData.length === 0) {
+      return;
+    }
+
+    // Use ImageEncoder's chunking infrastructure for consistency
+    const chunksGenerator = ImageEncoder.generateChunks(fullData, chunkSize);
+
+    for (const chunkInfo of chunksGenerator) {
+      // Yield the chunk
+      yield chunkInfo.chunk;
+
+      // Call callback if provided (enables backpressure)
+      if (onChunkSent) {
+        const callbackInfo = {
+          index: chunkInfo.index,
+          total: chunkInfo.total,
+          bytes: chunkInfo.chunk.length,
+          bytesSent: chunkInfo.byteOffset + chunkInfo.chunk.length,
+          totalBytes: chunkInfo.totalBytes,
+          isLast: chunkInfo.isLast,
+        };
+
+        // Await the callback to enable backpressure
+        await Promise.resolve(onChunkSent(callbackInfo));
+      }
+    }
   }
 
   /**

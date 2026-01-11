@@ -1,4 +1,5 @@
 import CodepageEncoder from '@point-of-sale/codepage-encoder';
+import ImageEncoder from '../image-encoder.js';
 
 /**
  * ESC/POS Language commands
@@ -430,236 +431,153 @@ class LanguageEscPos {
      * @param {number} width        Width of the image
      * @param {number} height       Height of the image
      * @param {string} mode         Image encoding mode ('column' or 'raster')
+     * @param {Object} [options]    Additional options
+     * @param {boolean} [options.supportsCompression=false] Use RLE compression if supported
      * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
      */
-  image(image, width, height, mode) {
+  image(image, width, height, mode, options = {}) {
+    const { supportsCompression = false } = options;
+
+    // Size thresholds for async processing
+    const totalPixels = width * height;
+    const isLargeImage = totalPixels > 250000;
+    const isWideImage = width > 800;
+    const shouldUseAsync = isLargeImage || isWideImage;
+
+    if (shouldUseAsync) {
+      return this._processImageAsync(image, width, height, mode, supportsCompression);
+    }
+
+    return this._processImageSync(image, width, height, mode, supportsCompression);
+  }
+
+  /**
+   * Process image synchronously (for smaller images)
+   * @param {ImageData} image - Image data object
+   * @param {number} width - Image width
+   * @param {number} height - Image height
+   * @param {string} mode - Encoding mode ('column' or 'raster')
+   * @param {boolean} useCompression - Whether to use RLE compression
+   * @return {Array} Array of command objects
+   * @private
+   */
+  _processImageSync(image, width, height, mode, useCompression) {
     const result = [];
 
-    const getPixel = (x, y) => x < width && y < height ? (image.data[((width * y) + x) * 4] > 0 ? 0 : 1) : 0;
+    if (mode === 'raster') {
+      const rasterResult = ImageEncoder.pixelsToRaster(image, width, height);
+      const command = ImageEncoder.buildRasterCommand(
+        rasterResult.data,
+        rasterResult.widthBytes,
+        rasterResult.height,
+        useCompression,
+      );
 
-    const getColumnDataAsync = (width, height, chunkSize = 5) => {
-      return new Promise((resolve, reject) => {
-        const data = [];
-        const totalSegments = Math.ceil(height / 24);
-        let currentSegment = 0;
-
-        const processChunk = async () => {
-          try {
-            // Process smaller chunks to reduce CPU pressure
-            const endSegment = Math.min(currentSegment + chunkSize, totalSegments);
-
-            for (let s = currentSegment; s < endSegment; s++) {
-              const bytes = new Uint8Array(width * 3);
-
-              // Process pixels in smaller batches within each segment
-              for (let x = 0; x < width; x++) {
-                for (let c = 0; c < 3; c++) {
-                  for (let b = 0; b < 8; b++) {
-                    bytes[(x * 3) + c] |= getPixel(x, (s * 24) + b + (8 * c)) << (7 - b);
-                  }
-                }
-
-                // Yield control every 100 pixels to prevent blocking
-                if (x % 100 === 0 && x > 0) {
-                  await new Promise(resolve => setTimeout(resolve, 0));
-                }
-              }
-
-              data.push(bytes);
-            }
-
-            currentSegment = endSegment;
-
-            if (currentSegment < totalSegments) {
-              // Use requestIdleCallback if available, otherwise setTimeout with longer delay
-              if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(processChunk, { timeout: 50 });
-              } else {
-                setTimeout(processChunk, 16); // ~60fps frame time
-              }
-            } else {
-              resolve(data);
-            }
-          } catch (error) {
-            reject(error);
-          }
-        };
-
-        processChunk();
+      result.push({
+        type: 'image',
+        command: 'raster',
+        value: 'raster',
+        width,
+        height,
+        compressed: command.compressed,
+        compressionRatio: command.ratio,
+        payload: Array.from(command.command),
       });
-    };
+    } else {
+      // Column mode (ESC *)
+      const strips = ImageEncoder.pixelsToColumns(image, width, height);
 
-    const getRowDataAsync = (width, height, chunkSize = 50) => {
-      return new Promise((resolve, reject) => {
-        const bytes = new Uint8Array((width * height) >> 3);
-        let currentRow = 0;
-
-        const processChunk = async () => {
-          try {
-            // Process fewer rows per chunk to reduce CPU pressure
-            const endRow = Math.min(currentRow + chunkSize, height);
-
-            for (let y = currentRow; y < endRow; y++) {
-              for (let x = 0; x < width; x = x + 8) {
-                for (let b = 0; b < 8; b++) {
-                  bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
-                }
-              }
-
-              // Yield control every 10 rows to prevent blocking
-              if ((y - currentRow) % 10 === 0 && y > currentRow) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
-            }
-
-            currentRow = endRow;
-
-            if (currentRow < height) {
-              // Use requestIdleCallback for better CPU scheduling
-              if (typeof requestIdleCallback !== 'undefined') {
-                requestIdleCallback(processChunk, { timeout: 50 });
-              } else {
-                setTimeout(processChunk, 16); // ~60fps frame time
-              }
-            } else {
-              resolve(bytes);
-            }
-          } catch (error) {
-            reject(error);
-          }
-        };
-
-        processChunk();
+      // Set 24-dot line spacing
+      result.push({
+        type: 'line-spacing',
+        value: '24 dots',
+        payload: [0x1b, 0x33, 0x24],
       });
-    };
 
-    // Optimized synchronous versions with early yielding for medium-sized images
-    const getColumnData = (width, height) => {
-      const data = [];
-      for (let s = 0; s < Math.ceil(height / 24); s++) {
-        const bytes = new Uint8Array(width * 3);
-        for (let x = 0; x < width; x++) {
-          for (let c = 0; c < 3; c++) {
-            for (let b = 0; b < 8; b++) {
-              bytes[(x * 3) + c] |= getPixel(x, (s * 24) + b + (8 * c)) << (7 - b);
-            }
-          }
-        }
-        data.push(bytes);
+      for (const stripData of strips) {
+        const command = ImageEncoder.buildColumnCommand(stripData, width);
+        result.push({
+          type: 'image',
+          property: 'data',
+          value: 'column',
+          width,
+          height: 24,
+          payload: Array.from(command),
+        });
       }
-      return data;
-    };
 
-    const getRowData = (width, height) => {
-      const bytes = new Uint8Array((width * height) >> 3);
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x = x + 8) {
-          for (let b = 0; b < 8; b++) {
-            bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
-          }
-        }
-      }
-      return bytes;
-    };
+      // Reset line spacing
+      result.push({
+        type: 'line-spacing',
+        value: 'default',
+        payload: [0x1b, 0x32],
+      });
+    }
 
-    // Improved size thresholds and processing strategy
-    const totalPixels = width * height;
-    const isLargeImage = totalPixels > 250000; // Lowered threshold
-    const isMediumImage = totalPixels > 100000;
+    return result;
+  }
 
-    /* Encode images with ESC * */
-    if (mode == 'column') {
-      if (isLargeImage) {
-        // Return a Promise for async processing with improved chunk size
-        return getColumnDataAsync(width, height, Math.max(2, Math.min(10, Math.floor(1000000 / totalPixels)))).then((columnData) => {
-          const asyncResult = [];
+  /**
+   * Process image asynchronously (for larger images)
+   * Prevents UI blocking and reduces memory pressure
+   * @param {ImageData} image - Image data object
+   * @param {number} width - Image width
+   * @param {number} height - Image height
+   * @param {string} mode - Encoding mode ('column' or 'raster')
+   * @param {boolean} useCompression - Whether to use RLE compression
+   * @return {Promise<Array>} Promise resolving to array of command objects
+   * @private
+   */
+  async _processImageAsync(image, width, height, mode, useCompression) {
+    const { commands, compressed } = await ImageEncoder.processImageAsync(
+      image,
+      width,
+      height,
+      mode,
+      { useCompression },
+    );
 
-          asyncResult.push({
+    const result = [];
+
+    if (mode === 'raster') {
+      result.push({
+        type: 'image',
+        command: 'raster',
+        value: 'raster',
+        width,
+        height,
+        compressed,
+        payload: Array.from(commands[0]),
+      });
+    } else {
+      // Column mode commands
+      for (let i = 0; i < commands.length; i++) {
+        const command = commands[i];
+
+        if (i === 0) {
+          // First command is line spacing
+          result.push({
             type: 'line-spacing',
             value: '24 dots',
-            payload: [0x1b, 0x33, 0x24],
+            payload: Array.from(command),
           });
-
-          columnData.forEach((bytes) => {
-            asyncResult.push({
-              type: 'image',
-              property: 'data',
-              value: 'column',
-              width,
-              height: 24,
-              payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
-            });
-          });
-
-          asyncResult.push({
+        } else if (i === commands.length - 1) {
+          // Last command is line spacing reset
+          result.push({
             type: 'line-spacing',
             value: 'default',
-            payload: [0x1b, 0x32],
+            payload: Array.from(command),
           });
-
-          return asyncResult;
-        });
-      } else {
-        // Use synchronous processing for smaller images
-        result.push({
-          type: 'line-spacing',
-          value: '24 dots',
-          payload: [0x1b, 0x33, 0x24],
-        });
-
-        getColumnData(width, height).forEach((bytes) => {
+        } else {
           result.push({
             type: 'image',
             property: 'data',
             value: 'column',
             width,
             height: 24,
-            payload: [0x1b, 0x2a, 0x21, width & 0xff, (width >> 8) & 0xff, ...bytes, 0x0a],
+            payload: Array.from(command),
           });
-        });
-
-        result.push({
-          type: 'line-spacing',
-          value: 'default',
-          payload: [0x1b, 0x32],
-        });
-      }
-    }
-
-    /* Encode images with GS v */
-    if (mode == 'raster') {
-      if (isLargeImage) {
-        // Return a Promise for async processing with improved chunk size
-        return getRowDataAsync(width, height, Math.max(20, Math.min(100, Math.floor(5000000 / totalPixels)))).then((bytes) => {
-          return [{
-            type: 'image',
-            command: 'data',
-            value: 'raster',
-            width,
-            height,
-            payload: [
-              0x1d, 0x76, 0x30, 0x00,
-              (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-              height & 0xff, ((height >> 8) & 0xff),
-              ...bytes,
-            ],
-          }];
-        });
-      } else {
-        // Use synchronous processing for smaller images
-        result.push({
-          type: 'image',
-          command: 'data',
-          value: 'raster',
-          width,
-          height,
-          payload: [
-            0x1d, 0x76, 0x30, 0x00,
-            (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-            height & 0xff, ((height >> 8) & 0xff),
-            ...getRowData(width, height),
-          ],
-        });
+        }
       }
     }
 
