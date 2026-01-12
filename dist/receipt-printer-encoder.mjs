@@ -2563,13 +2563,6 @@ class TextWrap {
           line = [];
           length = 0;
         }
-
-        /* Check if we are whitespace */
-
-        if (chunk.match(/\s+/) && length == 0) {
-          continue;
-        }
-
         line.push(chunk);
         length += chunk.length * width;
       }

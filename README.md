@@ -1,6 +1,6 @@
 # Receipt Printer Encoder
 
-Version: 1.0.1
+Version: 1.0.2
 
 Enterprise-grade library for generating ESC/POS, StarLine, and StarPRNT command streams for thermal receipt printers. Features memory-efficient image processing, RLE compression, and streaming transmission for large payloads.
 
@@ -24,17 +24,17 @@ npm install @point-of-sale/receipt-printer-encoder
 ## Quick Start
 
 ```javascript
-import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
 const encoder = new ReceiptPrinterEncoder({
-  printerModel: 'epson-tm-t88vi',
+  printerModel: "epson-tm-t88vi",
 });
 
 encoder
   .initialize()
-  .line('Hello World!')
+  .line("Hello World!")
   .newline()
-  .line('Receipt printed successfully')
+  .line("Receipt printed successfully")
   .cut();
 
 const data = encoder.encode();
@@ -50,11 +50,11 @@ const data = encoder.encode();
 A typical POS receipt with formatting, tables, and barcodes:
 
 ```javascript
-import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
 async function printNormalReceipt(printerService) {
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
+    printerModel: "epson-tm-t88vi",
     columns: 42,
   });
 
@@ -62,83 +62,83 @@ async function printNormalReceipt(printerService) {
     .initialize()
 
     // Header
-    .align('center')
+    .align("center")
     .bold(true)
     .size(2, 2)
-    .line('MY STORE')
+    .line("MY STORE")
     .size(1, 1)
     .bold(false)
-    .line('123 Main Street')
-    .line('City, State 12345')
-    .line('Tel: (555) 123-4567')
+    .line("123 Main Street")
+    .line("City, State 12345")
+    .line("Tel: (555) 123-4567")
     .newline()
 
     // Receipt info
-    .align('left')
-    .line('================================')
+    .align("left")
+    .line("================================")
     .line(`Date: ${new Date().toLocaleDateString()}`)
     .line(`Time: ${new Date().toLocaleTimeString()}`)
     .line(`Receipt #: INV-2026-001234`)
-    .line('================================')
+    .line("================================")
     .newline()
 
     // Items table
     .table(
       [
-        {width: 20, align: 'left'},
-        {width: 8, align: 'right'},
-        {width: 10, align: 'right'},
+        { width: 20, align: "left" },
+        { width: 8, align: "right" },
+        { width: 10, align: "right" },
       ],
       [
-        ['Item', 'Qty', 'Price'],
-        ['--------------------------------', '', ''],
-        ['Coffee Latte', '2', '$8.50'],
-        ['Croissant', '1', '$3.25'],
-        ['Orange Juice', '2', '$6.00'],
-        ['Sandwich', '1', '$7.50'],
-        ['--------------------------------', '', ''],
-      ],
+        ["Item", "Qty", "Price"],
+        ["--------------------------------", "", ""],
+        ["Coffee Latte", "2", "$8.50"],
+        ["Croissant", "1", "$3.25"],
+        ["Orange Juice", "2", "$6.00"],
+        ["Sandwich", "1", "$7.50"],
+        ["--------------------------------", "", ""],
+      ]
     )
 
     // Totals
     .newline()
     .table(
       [
-        {width: 22, align: 'left'},
-        {width: 16, align: 'right'},
+        { width: 22, align: "left" },
+        { width: 16, align: "right" },
       ],
       [
-        ['Subtotal:', '$25.25'],
-        ['Tax (8%):', '$2.02'],
-        ['', '--------'],
-      ],
+        ["Subtotal:", "$25.25"],
+        ["Tax (8%):", "$2.02"],
+        ["", "--------"],
+      ]
     )
     .bold(true)
     .table(
       [
-        {width: 22, align: 'left'},
-        {width: 16, align: 'right'},
+        { width: 22, align: "left" },
+        { width: 16, align: "right" },
       ],
-      [['TOTAL:', '$27.27']],
+      [["TOTAL:", "$27.27"]]
     )
     .bold(false)
     .newline()
 
     // Payment
-    .line('Payment: VISA ****4242')
+    .line("Payment: VISA ****4242")
     .newline()
 
     // Barcode
-    .align('center')
-    .barcode('INV2026001234', 'code128', {
+    .align("center")
+    .barcode("INV2026001234", "code128", {
       height: 60,
       text: true,
     })
     .newline()
 
     // Footer
-    .line('Thank you for your purchase!')
-    .line('Please come again')
+    .line("Thank you for your purchase!")
+    .line("Please come again")
     .newline()
     .newline()
 
@@ -176,7 +176,7 @@ Large raster images are automatically split into 256-pixel-height strips to prev
 - Memory pool: 4MB max, prevents allocation failures
 
 ```javascript
-import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
 /**
  * Print a full raster receipt (entire receipt is an image)
@@ -185,8 +185,8 @@ import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
  */
 async function printRasterReceipt(printerService, receiptImageData) {
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
-    imageMode: 'raster', // Use raster mode for full-page images
+    printerModel: "epson-tm-t88vi",
+    imageMode: "raster", // Use raster mode for full-page images
   });
 
   // receiptImageData should be an ImageData object with:
@@ -200,7 +200,7 @@ async function printRasterReceipt(printerService, receiptImageData) {
   await encoder.image(
     receiptImageData,
     receiptImageData.width,
-    receiptImageData.height,
+    receiptImageData.height
   );
 
   encoder.newline().cut();
@@ -247,20 +247,20 @@ async function createReceiptImage(htmlContent) {
 Print logos, signatures, or graphics within a text receipt:
 
 ```javascript
-import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
 /**
  * Print receipt with embedded logo
  */
 async function printReceiptWithLogo(printerService, logoImageData) {
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
+    printerModel: "epson-tm-t88vi",
   });
 
   encoder.initialize();
 
   // Center and print logo
-  encoder.align('center');
+  encoder.align("center");
 
   // Logo should be appropriately sized (e.g., 200x80 pixels)
   await encoder.image(logoImageData, logoImageData.width, logoImageData.height);
@@ -269,12 +269,12 @@ async function printReceiptWithLogo(printerService, logoImageData) {
     .newline()
     .bold(true)
     .size(2, 2)
-    .line('RECEIPT')
+    .line("RECEIPT")
     .size(1, 1)
     .bold(false)
     .newline()
-    .align('left')
-    .line('Order #12345')
+    .align("left")
+    .line("Order #12345")
     .line(`Date: ${new Date().toLocaleDateString()}`)
     .newline()
     // ... rest of receipt
@@ -289,22 +289,22 @@ async function printReceiptWithLogo(printerService, logoImageData) {
  */
 async function printWithSignature(printerService, signatureImageData) {
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
+    printerModel: "epson-tm-t88vi",
   });
 
-  encoder.initialize().line('Customer Signature:').newline();
+  encoder.initialize().line("Customer Signature:").newline();
 
   // Print signature (typically 300x100 pixels)
   await encoder.image(
     signatureImageData,
     signatureImageData.width,
-    signatureImageData.height,
+    signatureImageData.height
   );
 
   encoder
     .newline()
-    .line('_'.repeat(30))
-    .line('I agree to the terms above')
+    .line("_".repeat(30))
+    .line("I agree to the terms above")
     .newline()
     .cut();
 
@@ -322,7 +322,7 @@ For large images or full raster receipts, use streaming to prevent printer buffe
 Images are processed using strip-based encoding: each 256-pixel-height strip generates a separate GS v 0 command. Backpressure control operates at the **strip level**, not the monolithic image level. The encoder yields control after every 4 strips to prevent UI blocking. Memory pool (4MB max) ensures consistent performance regardless of image height.
 
 ```javascript
-import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
 /**
  * Print large image with streaming and backpressure control
@@ -331,8 +331,8 @@ import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
  */
 async function printLargeImage(printerService, largeImageData) {
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
-    imageMode: 'raster',
+    printerModel: "epson-tm-t88vi",
+    imageMode: "raster",
   });
 
   encoder.initialize();
@@ -343,7 +343,7 @@ async function printLargeImage(printerService, largeImageData) {
   await encoder.image(
     largeImageData,
     largeImageData.width,
-    largeImageData.height,
+    largeImageData.height
   );
 
   encoder.cut();
@@ -355,11 +355,11 @@ async function printLargeImage(printerService, largeImageData) {
   for await (const chunk of encoder.encodeAsyncIterator({
     chunkSize: 512, // 512 bytes per chunk (optimal for most printers)
 
-    onChunkSent: async info => {
+    onChunkSent: async (info) => {
       console.log(
         `Progress: ${info.index + 1}/${info.total} chunks (${Math.round(
-          (info.bytesSent / info.totalBytes) * 100,
-        )}%)`,
+          (info.bytesSent / info.totalBytes) * 100
+        )}%)`
       );
 
       // Track which strip we're in (each strip ≈ 18-20KB for 576px width)
@@ -382,13 +382,13 @@ async function printLargeImage(printerService, largeImageData) {
   }
 
   console.log(
-    `Print complete: ${totalBytesSent} bytes sent across ${stripCount} strips`,
+    `Print complete: ${totalBytesSent} bytes sent across ${stripCount} strips`
   );
 }
 
 // Helper function
 function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -399,8 +399,8 @@ function delay(ms) {
  */
 async function printWithStripTracking(printerService, imageData) {
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
-    imageMode: 'raster',
+    printerModel: "epson-tm-t88vi",
+    imageMode: "raster",
   });
 
   encoder.initialize();
@@ -422,17 +422,17 @@ async function printWithStripTracking(printerService, imageData) {
   // - Strip 3 processed: no yield (i=3, 3%4=3)
   // - Strip 4 processed: yield (i=4, 4%4=0 && i>0)
 
-  console.log('Encoding image with strip-based architecture...');
+  console.log("Encoding image with strip-based architecture...");
   const startTime = Date.now();
 
   await encoder.image(imageData, imageData.width, imageData.height);
   encoder.cut();
 
   console.log(`Image encoding complete in ${Date.now() - startTime}ms`);
-  console.log('Streaming to printer...');
+  console.log("Streaming to printer...");
 
   let chunkCount = 0;
-  for await (const chunk of encoder.encodeAsyncIterator({chunkSize: 512})) {
+  for await (const chunk of encoder.encodeAsyncIterator({ chunkSize: 512 })) {
     await printerService.sendChunk(chunk);
     chunkCount++;
   }
@@ -446,8 +446,8 @@ async function printWithStripTracking(printerService, imageData) {
  */
 async function printLargeImage(printerService, largeImageData) {
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
-    imageMode: 'raster',
+    printerModel: "epson-tm-t88vi",
+    imageMode: "raster",
   });
 
   encoder.initialize();
@@ -456,7 +456,7 @@ async function printLargeImage(printerService, largeImageData) {
   await encoder.image(
     largeImageData,
     largeImageData.width,
-    largeImageData.height,
+    largeImageData.height
   );
 
   encoder.cut();
@@ -467,11 +467,11 @@ async function printLargeImage(printerService, largeImageData) {
   for await (const chunk of encoder.encodeAsyncIterator({
     chunkSize: 512, // 512 bytes per chunk (optimal for most printers)
 
-    onChunkSent: async info => {
+    onChunkSent: async (info) => {
       console.log(
         `Progress: ${info.index + 1}/${info.total} chunks (${Math.round(
-          (info.bytesSent / info.totalBytes) * 100,
-        )}%)`,
+          (info.bytesSent / info.totalBytes) * 100
+        )}%)`
       );
 
       // Optional: Add delay between chunks to prevent buffer overflow
@@ -491,7 +491,7 @@ async function printLargeImage(printerService, largeImageData) {
 
 // Helper function
 function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 ```
 
@@ -504,7 +504,7 @@ function delay(ms) {
 async function printLargeImageWithRetry(
   printerService,
   imageData,
-  options = {},
+  options = {}
 ) {
   const {
     maxRetries = 3,
@@ -514,8 +514,8 @@ async function printLargeImageWithRetry(
   } = options;
 
   const encoder = new ReceiptPrinterEncoder({
-    printerModel: 'epson-tm-t88vi',
-    imageMode: 'raster',
+    printerModel: "epson-tm-t88vi",
+    imageMode: "raster",
   });
 
   encoder.initialize();
@@ -525,10 +525,10 @@ async function printLargeImageWithRetry(
   const startTime = Date.now();
   let currentChunkIndex = 0;
 
-  for await (const chunk of encoder.encodeAsyncIterator({chunkSize})) {
+  for await (const chunk of encoder.encodeAsyncIterator({ chunkSize })) {
     // Timeout check
     if (Date.now() - startTime > timeout) {
-      throw new Error('Print timeout exceeded');
+      throw new Error("Print timeout exceeded");
     }
 
     // Retry logic for each chunk
@@ -542,12 +542,12 @@ async function printLargeImageWithRetry(
       } catch (error) {
         retries++;
         console.warn(
-          `Chunk ${currentChunkIndex} failed, retry ${retries}/${maxRetries}`,
+          `Chunk ${currentChunkIndex} failed, retry ${retries}/${maxRetries}`
         );
 
         if (retries >= maxRetries) {
           throw new Error(
-            `Failed to send chunk ${currentChunkIndex} after ${maxRetries} retries: ${error.message}`,
+            `Failed to send chunk ${currentChunkIndex} after ${maxRetries} retries: ${error.message}`
           );
         }
 
@@ -561,7 +561,7 @@ async function printLargeImageWithRetry(
     currentChunkIndex++;
   }
 
-  return {success: true, chunks: currentChunkIndex};
+  return { success: true, chunks: currentChunkIndex };
 }
 ```
 
@@ -572,8 +572,8 @@ async function printLargeImageWithRetry(
 ### React Native (Android/iOS) - `react-native-tcp-socket`
 
 ```javascript
-import TcpSocket from 'react-native-tcp-socket';
-import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import TcpSocket from "react-native-tcp-socket";
+import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
 class TcpPrinterService {
   constructor(host, port = 9100) {
@@ -585,27 +585,27 @@ class TcpPrinterService {
   async connect() {
     return new Promise((resolve, reject) => {
       this.socket = TcpSocket.createConnection(
-        {host: this.host, port: this.port},
+        { host: this.host, port: this.port },
         () => {
           console.log(`Connected to printer at ${this.host}:${this.port}`);
           resolve();
-        },
+        }
       );
 
-      this.socket.on('error', error => {
-        console.error('Printer connection error:', error);
+      this.socket.on("error", (error) => {
+        console.error("Printer connection error:", error);
         reject(error);
       });
 
-      this.socket.on('close', () => {
-        console.log('Printer connection closed');
+      this.socket.on("close", () => {
+        console.log("Printer connection closed");
         this.socket = null;
       });
 
       // Connection timeout
       setTimeout(() => {
         if (!this.socket) {
-          reject(new Error('Connection timeout'));
+          reject(new Error("Connection timeout"));
         }
       }, 5000);
     });
@@ -614,14 +614,14 @@ class TcpPrinterService {
   async sendChunk(data) {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
-        reject(new Error('Not connected'));
+        reject(new Error("Not connected"));
         return;
       }
 
       // Convert Uint8Array to Buffer for react-native-tcp-socket
       const buffer = Buffer.from(data);
 
-      this.socket.write(buffer, 'binary', error => {
+      this.socket.write(buffer, "binary", (error) => {
         if (error) {
           reject(error);
         } else {
@@ -638,8 +638,8 @@ class TcpPrinterService {
 
   async printLargeImage(imageData) {
     const encoder = new ReceiptPrinterEncoder({
-      printerModel: 'epson-tm-t88vi',
-      imageMode: 'raster',
+      printerModel: "epson-tm-t88vi",
+      imageMode: "raster",
     });
 
     encoder.initialize();
@@ -649,7 +649,7 @@ class TcpPrinterService {
     // Stream with backpressure
     for await (const chunk of encoder.encodeAsyncIterator({
       chunkSize: 512,
-      onChunkSent: async info => {
+      onChunkSent: async (info) => {
         // Small delay to prevent buffer overflow
         await this.delay(5);
       },
@@ -659,7 +659,7 @@ class TcpPrinterService {
   }
 
   delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   disconnect() {
@@ -672,15 +672,15 @@ class TcpPrinterService {
 
 // Usage
 async function printReceipt() {
-  const printer = new TcpPrinterService('192.168.1.100', 9100);
+  const printer = new TcpPrinterService("192.168.1.100", 9100);
 
   try {
     await printer.connect();
 
     const encoder = new ReceiptPrinterEncoder({
-      printerModel: 'epson-tm-t88vi',
+      printerModel: "epson-tm-t88vi",
     });
-    encoder.initialize().line('Hello from React Native!').cut();
+    encoder.initialize().line("Hello from React Native!").cut();
 
     await printer.print(encoder.encode());
   } finally {
@@ -696,10 +696,10 @@ async function printReceipt() {
 For Windows-specific TCP communication using a custom native module:
 
 ```javascript
-import {NativeModules} from 'react-native';
-import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import { NativeModules } from "react-native";
+import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 
-const {TcpPrinterModule} = NativeModules;
+const { TcpPrinterModule } = NativeModules;
 
 class WindowsPrinterService {
   constructor(host, port = 9100) {
@@ -714,14 +714,14 @@ class WindowsPrinterService {
       this.isConnected = true;
       console.log(`Connected to printer at ${this.host}:${this.port}`);
     } catch (error) {
-      console.error('Failed to connect:', error);
+      console.error("Failed to connect:", error);
       throw error;
     }
   }
 
   async sendChunk(data) {
     if (!this.isConnected) {
-      throw new Error('Not connected to printer');
+      throw new Error("Not connected to printer");
     }
 
     // Convert Uint8Array to base64 for native module transfer
@@ -738,11 +738,11 @@ class WindowsPrinterService {
    * Prevents buffer overflow on Windows thermal printers
    */
   async printLargeImage(imageData, options = {}) {
-    const {chunkSize = 512, chunkDelay = 10} = options;
+    const { chunkSize = 512, chunkDelay = 10 } = options;
 
     const encoder = new ReceiptPrinterEncoder({
-      printerModel: 'epson-tm-t88vi',
-      imageMode: 'raster',
+      printerModel: "epson-tm-t88vi",
+      imageMode: "raster",
     });
 
     encoder.initialize();
@@ -753,7 +753,7 @@ class WindowsPrinterService {
 
     for await (const chunk of encoder.encodeAsyncIterator({
       chunkSize,
-      onChunkSent: async info => {
+      onChunkSent: async (info) => {
         progress = Math.round((info.bytesSent / info.totalBytes) * 100);
 
         // Report progress to UI if needed
@@ -770,11 +770,11 @@ class WindowsPrinterService {
       await this.sendChunk(chunk);
     }
 
-    return {success: true, progress: 100};
+    return { success: true, progress: 100 };
   }
 
   uint8ArrayToBase64(uint8Array) {
-    let binary = '';
+    let binary = "";
     for (let i = 0; i < uint8Array.length; i++) {
       binary += String.fromCharCode(uint8Array[i]);
     }
@@ -782,7 +782,7 @@ class WindowsPrinterService {
   }
 
   delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async disconnect() {
@@ -795,7 +795,7 @@ class WindowsPrinterService {
 
 // Usage with progress reporting
 async function printLargeReceipt(imageData) {
-  const printer = new WindowsPrinterService('192.168.1.100', 9100);
+  const printer = new WindowsPrinterService("192.168.1.100", 9100);
 
   try {
     await printer.connect();
@@ -805,15 +805,15 @@ async function printLargeReceipt(imageData) {
       chunkDelay: 10,
       onProgress: (percent, info) => {
         console.log(
-          `Printing: ${percent}% (chunk ${info.index + 1}/${info.total})`,
+          `Printing: ${percent}% (chunk ${info.index + 1}/${info.total})`
         );
         // Update your UI progress bar here
       },
     });
 
-    console.log('Print completed successfully!');
+    console.log("Print completed successfully!");
   } catch (error) {
-    console.error('Print failed:', error);
+    console.error("Print failed:", error);
     throw error;
   } finally {
     await printer.disconnect();
@@ -875,7 +875,7 @@ console.log(printers);
 
 // Use specific printer model
 const encoder = new ReceiptPrinterEncoder({
-  printerModel: 'epson-tm-t88vi',
+  printerModel: "epson-tm-t88vi",
 });
 
 // Access printer capabilities
@@ -909,9 +909,9 @@ console.log(encoder.printerCapabilities);
 ```javascript
 // Without specific printer model
 const encoder = new ReceiptPrinterEncoder({
-  language: 'esc-pos', // 'esc-pos', 'star-prnt', or 'star-line'
+  language: "esc-pos", // 'esc-pos', 'star-prnt', or 'star-line'
   columns: 42, // Paper width in characters
-  imageMode: 'raster', // 'raster' or 'column'
+  imageMode: "raster", // 'raster' or 'column'
 });
 ```
 
@@ -1004,7 +1004,7 @@ const data = encoder.encode();
 await printer.print(data);
 
 // ✅ Good - streams in chunks
-for await (const chunk of encoder.encodeAsyncIterator({chunkSize: 512})) {
+for await (const chunk of encoder.encodeAsyncIterator({ chunkSize: 512 })) {
   await printer.sendChunk(chunk);
 }
 ```
@@ -1050,13 +1050,13 @@ function adjustImageWidth(imageData) {
 
 ```javascript
 const encoder = new ReceiptPrinterEncoder({
-  printerModel: 'epson-tm-t88vi',
+  printerModel: "epson-tm-t88vi",
 });
 
 encoder
   .initialize()
-  .codepage('auto') // Auto-detect codepage
-  .line('Special chars: áéíóú ñ €')
+  .codepage("auto") // Auto-detect codepage
+  .line("Special chars: áéíóú ñ €")
   .cut();
 ```
 
@@ -1077,7 +1077,7 @@ async function connectWithRetry(printer, maxRetries = 3) {
       await delay(1000 * (i + 1)); // Exponential backoff
     }
   }
-  throw new Error('Failed to connect after multiple attempts');
+  throw new Error("Failed to connect after multiple attempts");
 }
 ```
 
@@ -1089,8 +1089,8 @@ async function connectWithRetry(printer, maxRetries = 3) {
 
 ```javascript
 const encoder = new ReceiptPrinterEncoder({
-  printerModel: 'star-tsp100iv', // Automatically uses star-prnt language
-  imageMode: 'column', // Column mode for Star printers
+  printerModel: "star-tsp100iv", // Automatically uses star-prnt language
+  imageMode: "column", // Column mode for Star printers
 });
 ```
 
