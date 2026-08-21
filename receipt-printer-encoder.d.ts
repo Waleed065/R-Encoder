@@ -1,4 +1,4 @@
-interface IImageData {
+export interface IImageData {
   data: Uint8ClampedArray | number[];
   height: number;
   width: number;
@@ -9,7 +9,7 @@ interface IImageData {
 /**
  * Chunk information yielded by encodeAsyncIterator and ImageEncoder
  */
-interface ChunkInfo {
+export interface ChunkInfo {
   /** Zero-based chunk index */
   index: number;
   /** Total number of chunks */
@@ -27,7 +27,7 @@ interface ChunkInfo {
 /**
  * Options for the encodeAsyncIterator method
  */
-interface EncodeAsyncIteratorOptions {
+export interface EncodeAsyncIteratorOptions {
   /** Size of each chunk in bytes (default: 512) */
   chunkSize?: number;
   /**
@@ -40,7 +40,7 @@ interface EncodeAsyncIteratorOptions {
 /**
  * RLE compression result
  */
-interface RLEResult {
+export interface RLEResult {
   /** Compressed or original data */
   data: Uint8Array;
   /** Whether compression was applied */
@@ -56,7 +56,7 @@ interface RLEResult {
 /**
  * Raster bitmap result
  */
-interface RasterResult {
+export interface RasterResult {
   /** Raster bitmap data */
   data: Uint8Array;
   /** Width in bytes (width / 8) */
@@ -68,7 +68,7 @@ interface RasterResult {
 /**
  * Image processing options
  */
-interface ImageProcessOptions {
+export interface ImageProcessOptions {
   /** Use RLE compression if supported */
   useCompression?: boolean;
   /** Yield control every N pixels for async processing */
@@ -78,7 +78,7 @@ interface ImageProcessOptions {
 /**
  * Printer capabilities for images
  */
-interface ImageCapabilities {
+export interface ImageCapabilities {
   /** Image encoding mode ('column' or 'raster') */
   mode?: "column" | "raster";
   /** Whether the printer supports RLE compression */
@@ -88,7 +88,7 @@ interface ImageCapabilities {
 /**
  * Printer capabilities definition
  */
-interface PrinterCapabilities {
+export interface PrinterCapabilities {
   language: string;
   codepages: string;
   fonts: Record<string, { size: string; columns: number }>;
@@ -148,18 +148,18 @@ export default class ReceiptPrinterEncoder {
   rule(options?: object): this;
   box(
     options: object,
-    contents: string | ((encoder: ReceiptPrinterEncoder) => void)
+    contents: string | ((encoder: ReceiptPrinterEncoder) => void),
   ): this;
   barcode(
     value: string,
     symbology: string | number,
-    height?: number | object
+    height?: number | object,
   ): this;
   qrcode(
     value: string,
     model?: number | object,
     size?: number,
-    errorlevel?: string
+    errorlevel?: string,
   ): this;
   pdf417(value: string, options?: object): this;
   image(input: IImageData, width: number, height: number): Promise<this>;
@@ -174,7 +174,7 @@ export default class ReceiptPrinterEncoder {
    * This method enables backpressure-aware transmission to printers with limited buffers.
    */
   encodeAsyncIterator(
-    options?: EncodeAsyncIteratorOptions
+    options?: EncodeAsyncIteratorOptions,
   ): AsyncGenerator<Uint8Array, void, unknown>;
 
   readonly columns: number;
@@ -183,145 +183,9 @@ export default class ReceiptPrinterEncoder {
   static readonly printerModels: { id: string; name: string }[];
 }
 
-/**
- * Enterprise-grade Image Encoder for receipt printers.
- * Provides memory-efficient image processing with RLE compression,
- * chunked transmission, and streaming support.
+/*
+ * NOTE: The image processing helpers (ImageEncoder, RLE compression, chunk
+ * generation) are an internal implementation detail and are NOT exported from
+ * the package. They are used internally by ReceiptPrinterEncoder.image() and
+ * ReceiptPrinterEncoder.encodeAsyncIterator().
  */
-export class ImageEncoder {
-  /** Default chunk size for transmission (512 bytes) */
-  static readonly DEFAULT_CHUNK_SIZE: number;
-
-  /** Maximum RLE run length per ESC/POS spec */
-  static readonly MAX_RLE_RUN: number;
-
-  /**
-   * Validate image input data
-   */
-  static validateImage(image: IImageData): void;
-
-  /**
-   * Validate dimensions for printing
-   */
-  static validateDimensions(width: number, height: number): void;
-
-  /**
-   * Get pixel value at coordinates (0 = white/transparent, 1 = black)
-   */
-  static getPixel(
-    image: IImageData,
-    x: number,
-    y: number,
-    width: number,
-    height: number
-  ): number;
-
-  /**
-   * Convert image to raster bitmap format (row-major, MSB first)
-   */
-  static pixelsToRaster(
-    image: IImageData,
-    width: number,
-    height: number
-  ): RasterResult;
-
-  /**
-   * Convert image to column format (24-dot vertical strips)
-   */
-  static pixelsToColumns(
-    image: IImageData,
-    width: number,
-    height: number
-  ): Uint8Array[];
-
-  /**
-   * Compress data using RLE (Run-Length Encoding)
-   * Compatible with ESC/POS GS v 0 mode 1
-   */
-  static compressRLE(data: Uint8Array): RLEResult;
-
-  /**
-   * Decompress RLE data
-   */
-  static decompressRLE(data: Uint8Array): Uint8Array;
-
-  /**
-   * Generate payload chunks for streaming transmission
-   */
-  static generateChunks(
-    payload: Uint8Array,
-    chunkSize?: number
-  ): Generator<{
-    chunk: Uint8Array;
-    index: number;
-    total: number;
-    isLast: boolean;
-    byteOffset: number;
-    totalBytes: number;
-  }>;
-
-  /**
-   * Async generator for chunked transmission with backpressure support
-   */
-  static generateChunksAsync(
-    payload: Uint8Array,
-    chunkSize?: number,
-    onChunkReady?: (info: ChunkInfo) => void | Promise<void>
-  ): AsyncGenerator<{
-    chunk: Uint8Array;
-    index: number;
-    total: number;
-    isLast: boolean;
-    byteOffset: number;
-    totalBytes: number;
-  }>;
-
-  /**
-   * Concatenate multiple Uint8Arrays efficiently
-   */
-  static concatenate(...arrays: Uint8Array[]): Uint8Array;
-
-  /**
-   * Build ESC/POS raster image command (GS v 0)
-   */
-  static buildRasterCommand(
-    rasterData: Uint8Array,
-    widthBytes: number,
-    height: number,
-    useCompression?: boolean
-  ): { command: Uint8Array; compressed: boolean; ratio: number };
-
-  /**
-   * Build ESC/POS column image command (ESC *)
-   */
-  static buildColumnCommand(stripData: Uint8Array, width: number): Uint8Array;
-
-  /**
-   * Build line spacing command
-   */
-  static buildLineSpacingCommand(dots: number): Uint8Array;
-
-  /**
-   * Build Star PRNT column image command (ESC X)
-   */
-  static buildStarColumnCommand(
-    stripData: Uint8Array,
-    width: number
-  ): Uint8Array;
-
-  /**
-   * Release memory pool resources
-   */
-  static releasePool(): void;
-
-  /**
-   * Process image asynchronously with yielding for large images
-   */
-  static processImageAsync(
-    image: IImageData,
-    width: number,
-    height: number,
-    mode: "column" | "raster",
-    options?: ImageProcessOptions
-  ): Promise<{ commands: Uint8Array[]; compressed: boolean }>;
-}

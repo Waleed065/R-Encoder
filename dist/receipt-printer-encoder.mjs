@@ -47,84 +47,99 @@ import CodepageEncoder from '@point-of-sale/codepage-encoder';
  * @private
  */
 class MemoryPool {
-    /** @type {Map<number, Uint8Array[]>} */
-    #pools = new Map();
+  /** @type {Map<number, Uint8Array[]>} */
+  #pools = new Map();
 
-    /** @type {number} */
-    #maxPoolSize = 10;
+  /** @type {number} */
+  #maxPoolSize = 10;
 
-    /** @type {number} */
-    #maxBufferSize = 4 * 1024 * 1024; // 4MB max pooled buffer (increased for large receipts)
+  /** @type {number} */
+  #maxBufferSize = 4 * 1024 * 1024; // 4MB max pooled buffer (increased for large receipts)
 
-    /**
-     * Acquire a buffer of at least the specified size
-     * @param {number} size - Minimum buffer size needed
-     * @return {Uint8Array} - Buffer from pool or newly allocated
-     */
-    acquire(size) {
-        if (size > this.#maxBufferSize) {
-            // Don't pool very large buffers
-            return new Uint8Array(size);
-        }
-
-        // Round up to nearest power of 2 for better reuse
-        const poolSize = this.#nextPowerOf2(size);
-        const pool = this.#pools.get(poolSize);
-
-        if (pool && pool.length > 0) {
-            return pool.pop();
-        }
-
-        return new Uint8Array(poolSize);
+  /**
+   * Acquire a buffer of at least the specified size
+   * @param {number} size - Minimum buffer size needed
+   * @return {Uint8Array} - Buffer from pool or newly allocated
+   */
+  acquire(size) {
+    if (size > this.#maxBufferSize) {
+      // Don't pool very large buffers
+      return new Uint8Array(size);
     }
 
-    /**
-     * Release a buffer back to the pool
-     * @param {Uint8Array} buffer - Buffer to release
-     */
-    release(buffer) {
-        if (buffer.length > this.#maxBufferSize) {
-            return; // Don't pool very large buffers
-        }
+    // Round up to nearest power of 2 for better reuse
+    const poolSize = this.#nextPowerOf2(size);
+    const pool = this.#pools.get(poolSize);
 
-        const poolSize = buffer.length;
-        let pool = this.#pools.get(poolSize);
+    if (pool && pool.length > 0) {
+      const buffer = pool.pop();
 
-        if (!pool) {
-            pool = [];
-            this.#pools.set(poolSize, pool);
-        }
+      // Released buffers are subarray views whose length can be shorter
+      // than the rounded pool size. Never return a view that cannot hold
+      // the requested size: callers clamp it with subarray(0, size), which
+      // would silently truncate the data (the GS v 0 header would then
+      // declare more rows than the payload actually contains).
+      if (buffer.length >= size) {
+        return buffer;
+      }
 
-        if (pool.length < this.#maxPoolSize) {
-            // Zero out the buffer before returning to pool
-            buffer.fill(0);
-            pool.push(buffer);
-        }
+      // Undersized view: discard it and allocate a fresh buffer.
     }
 
-    /**
-     * Clear all pooled buffers
-     */
-    clear() {
-        this.#pools.clear();
+    return new Uint8Array(poolSize);
+  }
+
+  /**
+   * Release a buffer back to the pool
+   * @param {Uint8Array} buffer - Buffer to release
+   */
+  release(buffer) {
+    if (buffer.length > this.#maxBufferSize) {
+      return; // Don't pool very large buffers
     }
 
-    /**
-     * Get next power of 2 >= n
-     * @private
-     * @param {number} n
-     * @return {number}
-     */
-    #nextPowerOf2(n) {
-        if (n <= 0) return 1;
-        n--;
-        n |= n >> 1;
-        n |= n >> 2;
-        n |= n >> 4;
-        n |= n >> 8;
-        n |= n >> 16;
-        return n + 1;
+    // Buffers are acquired keyed by the next power of two >= size. The strip
+    // helpers hand back a subarray view whose length is the exact (unrounded)
+    // size, so key the pool by the same rounded size, otherwise released
+    // buffers would never be found by acquire() again.
+    const poolSize = this.#nextPowerOf2(buffer.length);
+    let pool = this.#pools.get(poolSize);
+
+    if (!pool) {
+      pool = [];
+      this.#pools.set(poolSize, pool);
     }
+
+    if (pool.length < this.#maxPoolSize) {
+      // Zero out the buffer before returning to pool
+      buffer.fill(0);
+      pool.push(buffer);
+    }
+  }
+
+  /**
+   * Clear all pooled buffers
+   */
+  clear() {
+    this.#pools.clear();
+  }
+
+  /**
+   * Get next power of 2 >= n
+   * @private
+   * @param {number} n
+   * @return {number}
+   */
+  #nextPowerOf2(n) {
+    if (n <= 0) return 1;
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    return n + 1;
+  }
 }
 
 /**
@@ -138,717 +153,801 @@ class MemoryPool {
  * - Comprehensive input validation
  */
 class ImageEncoder {
-    /** @type {MemoryPool} */
-    static #memoryPool = new MemoryPool();
+  /** @type {MemoryPool} */
+  static #memoryPool = new MemoryPool();
 
-    /**
-     * Default chunk size for transmission (512 bytes)
-     * Optimized for typical printer buffer sizes
-     * @type {number}
-     */
-    static DEFAULT_CHUNK_SIZE = 512;
+  /**
+   * Default chunk size for transmission (512 bytes)
+   * Optimized for typical printer buffer sizes
+   * @type {number}
+   */
+  static DEFAULT_CHUNK_SIZE = 512;
 
-    /**
-     * Maximum RLE run length per ESC/POS spec
-     * @type {number}
-     */
-    static MAX_RLE_RUN = 255;
+  /**
+   * Maximum RLE run length per ESC/POS spec
+   * @type {number}
+   */
+  static MAX_RLE_RUN = 255;
 
-    /**
-     * Validate image input data
-     * @param {ImageData} image - Image data to validate
-     * @throws {Error} If validation fails
-     */
-    static validateImage(image) {
-        if (!image || typeof image !== 'object') {
-            throw new Error('ImageEncoder: image must be an object');
-        }
-
-        if (!image.data) {
-            throw new Error('ImageEncoder: image.data is required');
-        }
-
-        if (typeof image.width !== 'number' || image.width <= 0) {
-            throw new Error('ImageEncoder: image.width must be a positive number');
-        }
-
-        if (typeof image.height !== 'number' || image.height <= 0) {
-            throw new Error('ImageEncoder: image.height must be a positive number');
-        }
-
-        const expectedLength = image.width * image.height * 4;
-        if (image.data.length < expectedLength) {
-            throw new Error(
-                `ImageEncoder: image.data length (${image.data.length}) is less than expected (${expectedLength})`,
-            );
-        }
+  /**
+   * Validate image input data
+   * @param {ImageData} image - Image data to validate
+   * @throws {Error} If validation fails
+   */
+  static validateImage(image) {
+    if (!image || typeof image !== "object") {
+      throw new Error("ImageEncoder: image must be an object");
     }
 
-    /**
-     * Validate dimensions for printing
-     * @param {number} width - Target width
-     * @param {number} height - Target height
-     * @throws {Error} If validation fails
-     */
-    static validateDimensions(width, height) {
-        if (typeof width !== 'number' || width <= 0) {
-            throw new Error('ImageEncoder: width must be a positive number');
-        }
-
-        if (typeof height !== 'number' || height <= 0) {
-            throw new Error('ImageEncoder: height must be a positive number');
-        }
-
-        if (width % 8 !== 0) {
-            throw new Error('ImageEncoder: width must be a multiple of 8');
-        }
+    if (!image.data) {
+      throw new Error("ImageEncoder: image.data is required");
     }
 
-    /**
-     * Get pixel value at coordinates (0 = white/transparent, 1 = black)
-     * @param {ImageData} image - Source image
-     * @param {number} x - X coordinate
-     * @param {number} y - Y coordinate
-     * @param {number} width - Image width for bounds checking
-     * @param {number} height - Image height for bounds checking
-     * @return {number} 0 or 1
-     */
-    static getPixel(image, x, y, width, height) {
-        if (x < 0 || x >= width || y < 0 || y >= height) {
-            return 0;
-        }
-        const index = ((width * y) + x) * 4;
-        // Pixel is black (print dot) if red channel <= 127
-        // Using red channel as grayscale indicator
-        return image.data[index] > 127 ? 0 : 1;
+    if (typeof image.width !== "number" || image.width <= 0) {
+      throw new Error("ImageEncoder: image.width must be a positive number");
     }
 
-    /**
-     * Convert image to raster bitmap format (row-major, MSB first)
-     * Used for ESC/POS GS v 0 command
-     *
-     * @param {ImageData} image - Source image data
-     * @param {number} width - Target width (must be multiple of 8)
-     * @param {number} height - Target height
-     * @return {RasterResult} Raster bitmap data
-     */
-    static pixelsToRaster(image, width, height) {
-        this.validateImage(image);
-        this.validateDimensions(width, height);
-
-        const widthBytes = width >> 3; // width / 8
-        const totalBytes = widthBytes * height;
-        const bytes = this.#memoryPool.acquire(totalBytes);
-
-        // Ensure we have exactly the size we need (pool may give larger)
-        const result = bytes.length === totalBytes ? bytes : bytes.subarray(0, totalBytes);
-        result.fill(0);
-
-        for (let y = 0; y < height; y++) {
-            const rowOffset = y * widthBytes;
-            for (let x = 0; x < width; x += 8) {
-                let byte = 0;
-                for (let b = 0; b < 8; b++) {
-                    byte |= this.getPixel(image, x + b, y, width, height) << (7 - b);
-                }
-                result[rowOffset + (x >> 3)] = byte;
-            }
-        }
-
-        return {
-            data: result,
-            widthBytes,
-            height,
-        };
+    if (typeof image.height !== "number" || image.height <= 0) {
+      throw new Error("ImageEncoder: image.height must be a positive number");
     }
 
-    /**
-     * Default strip height for strip-based raster encoding
-     * 512 rows = ~36KB per strip for 576px width
-     * Larger strips = fewer GS v 0 commands = faster printing
-     * Still safe for most printer memory buffers (typically 64KB+)
-     * @type {number}
-     */
-    static IMAGE_STRIP_HEIGHT = 512;
+    const expectedLength = image.width * image.height * 4;
+    if (image.data.length < expectedLength) {
+      throw new Error(
+        `ImageEncoder: image.data length (${image.data.length}) is less than expected (${expectedLength})`,
+      );
+    }
+  }
 
-    /**
-     * Convert image to raster bitmap format in horizontal strips
-     * Used for large images to avoid memory issues with single large buffer.
-     * Each strip generates a separate GS v 0 command - printers handle this as continuous print.
-     *
-     * @param {ImageData} image - Source image data
-     * @param {number} width - Target width (must be multiple of 8)
-     * @param {number} height - Target height
-     * @param {number} [stripHeight=256] - Height of each strip in rows
-     * @return {{strips: RasterResult[], widthBytes: number, totalHeight: number}}
-     */
-    static pixelsToRasterStrips(image, width, height, stripHeight = this.IMAGE_STRIP_HEIGHT) {
-        this.validateImage(image);
-        this.validateDimensions(width, height);
-
-        const widthBytes = width >> 3; // width / 8
-        const strips = [];
-        const totalStrips = Math.ceil(height / stripHeight);
-
-        for (let s = 0; s < totalStrips; s++) {
-            const startY = s * stripHeight;
-            const currentStripHeight = Math.min(stripHeight, height - startY);
-            const stripBytes = widthBytes * currentStripHeight;
-
-            const bytes = this.#memoryPool.acquire(stripBytes);
-            const stripData = bytes.length === stripBytes ? bytes : bytes.subarray(0, stripBytes);
-            stripData.fill(0);
-
-            for (let y = 0; y < currentStripHeight; y++) {
-                const srcY = startY + y;
-                const rowOffset = y * widthBytes;
-
-                for (let x = 0; x < width; x += 8) {
-                    let byte = 0;
-                    for (let b = 0; b < 8; b++) {
-                        byte |= this.getPixel(image, x + b, srcY, width, height) << (7 - b);
-                    }
-                    stripData[rowOffset + (x >> 3)] = byte;
-                }
-            }
-
-            strips.push({
-                data: stripData,
-                widthBytes,
-                height: currentStripHeight,
-            });
-        }
-
-        return {
-            strips,
-            widthBytes,
-            totalHeight: height,
-        };
+  /**
+   * Validate dimensions for printing
+   * @param {number} width - Target width
+   * @param {number} height - Target height
+   * @throws {Error} If validation fails
+   */
+  static validateDimensions(width, height) {
+    if (typeof width !== "number" || width <= 0) {
+      throw new Error("ImageEncoder: width must be a positive number");
     }
 
-    /**
-     * Build multiple ESC/POS raster commands from strips
-     * Returns array of Uint8Array commands, one per strip
-     *
-     * @param {RasterResult[]} strips - Array of raster strip results
-     * @param {boolean} [useCompression=false] - Use RLE compression
-     * @return {Uint8Array[]} Array of complete GS v 0 commands
-     */
-    static buildRasterCommandsFromStrips(strips, useCompression = false) {
-        const commands = [];
-
-        for (const strip of strips) {
-            const command = this.buildRasterCommand(
-                strip.data,
-                strip.widthBytes,
-                strip.height,
-                useCompression,
-            );
-            commands.push(command.command);
-        }
-
-        return commands;
+    if (typeof height !== "number" || height <= 0) {
+      throw new Error("ImageEncoder: height must be a positive number");
     }
 
-    /**
-     * Convert image to column format (24-dot vertical strips)
-     * Used for ESC/POS ESC * command
-     *
-     * @param {ImageData} image - Source image data
-     * @param {number} width - Target width
-     * @param {number} height - Target height
-     * @return {Uint8Array[]} Array of column strip data
-     */
-    static pixelsToColumns(image, width, height) {
-        this.validateImage(image);
+    if (width % 8 !== 0) {
+      throw new Error("ImageEncoder: width must be a multiple of 8");
+    }
+  }
 
-        const strips = [];
-        const totalStrips = Math.ceil(height / 24);
+  /**
+   * Get pixel value at coordinates (0 = white/transparent, 1 = black)
+   * @param {ImageData} image - Source image
+   * @param {number} x - X coordinate
+   * @param {number} y - Y coordinate
+   * @param {number} width - Image width for bounds checking
+   * @param {number} height - Image height for bounds checking
+   * @return {number} 0 or 1
+   */
+  static getPixel(image, x, y, width, height) {
+    if (x < 0 || x >= width || y < 0 || y >= height) {
+      return 0;
+    }
+    const index = (width * y + x) * 4;
+    // Fully transparent pixels never print. Without this check a
+    // transparent pixel with a dark RGB value would print as a black dot,
+    // turning logos with transparent backgrounds into black rectangles.
+    if (image.data[index + 3] < 128) {
+      return 0;
+    }
+    // Luminance threshold (Rec. 709 weights); dark pixels print a dot.
+    const luminance =
+      image.data[index] * 0.2126 +
+      image.data[index + 1] * 0.7152 +
+      image.data[index + 2] * 0.0722;
+    return luminance > 127 ? 0 : 1;
+  }
 
-        for (let s = 0; s < totalStrips; s++) {
-            const stripY = s * 24;
-            const bytesPerStrip = width * 3;
-            const bytes = this.#memoryPool.acquire(bytesPerStrip);
-            const strip = bytes.length === bytesPerStrip ? bytes : bytes.subarray(0, bytesPerStrip);
-            strip.fill(0);
+  /**
+   * Convert image to raster bitmap format (row-major, MSB first)
+   * Used for ESC/POS GS v 0 command
+   *
+   * @param {ImageData} image - Source image data
+   * @param {number} width - Target width (must be multiple of 8)
+   * @param {number} height - Target height
+   * @return {RasterResult} Raster bitmap data
+   */
+  static pixelsToRaster(image, width, height) {
+    this.validateImage(image);
+    this.validateDimensions(width, height);
 
-            for (let x = 0; x < width; x++) {
-                const offset = x * 3;
+    const widthBytes = width >> 3; // width / 8
+    const totalBytes = widthBytes * height;
+    const bytes = this.#memoryPool.acquire(totalBytes);
 
-                // Pack 3 bytes per column (24 pixels vertical)
-                for (let c = 0; c < 3; c++) {
-                    let byte = 0;
-                    for (let b = 0; b < 8; b++) {
-                        byte |= this.getPixel(image, x, stripY + (c * 8) + b, width, height) << (7 - b);
-                    }
-                    strip[offset + c] = byte;
-                }
-            }
+    // Ensure we have exactly the size we need (pool may give larger)
+    const result =
+      bytes.length === totalBytes ? bytes : bytes.subarray(0, totalBytes);
+    result.fill(0);
 
-            strips.push(strip);
+    for (let y = 0; y < height; y++) {
+      const rowOffset = y * widthBytes;
+      for (let x = 0; x < width; x += 8) {
+        let byte = 0;
+        for (let b = 0; b < 8; b++) {
+          byte |= this.getPixel(image, x + b, y, width, height) << (7 - b);
         }
-
-        return strips;
+        result[rowOffset + (x >> 3)] = byte;
+      }
     }
 
-    /**
-     * Compress data using RLE (Run-Length Encoding)
-     * Compatible with ESC/POS GS v 0 mode 1
-     *
-     * RLE format: For runs of identical bytes:
-     * - If run length <= 1: output byte as-is
-     * - If run length > 1: output [count, byte]
-     *
-     * Note: ESC/POS RLE is a simple scheme where:
-     * - Byte values 0x00-0x7F: literal (n+1 bytes follow)
-     * - Byte values 0x80-0xFF: run of (n-0x80+2) copies of next byte
-     *
-     * @param {Uint8Array} data - Data to compress
-     * @return {RLEResult} Compression result
-     */
-    static compressRLE(data) {
-        if (!data || data.length === 0) {
-            return {
-                data: new Uint8Array(0),
-                compressed: false,
-                originalSize: 0,
-                compressedSize: 0,
-                ratio: 1.0,
-            };
+    return {
+      data: result,
+      widthBytes,
+      height,
+    };
+  }
+
+  /**
+   * Default strip height for strip-based raster encoding
+   * 512 rows = ~36KB per strip for 576px width
+   * Larger strips = fewer GS v 0 commands = faster printing
+   * Still safe for most printer memory buffers (typically 64KB+)
+   * @type {number}
+   */
+  static IMAGE_STRIP_HEIGHT = 512;
+
+  /**
+   * Convert image to raster bitmap format in horizontal strips
+   * Used for large images to avoid memory issues with single large buffer.
+   * Each strip generates a separate GS v 0 command - printers handle this as continuous print.
+   *
+   * @param {ImageData} image - Source image data
+   * @param {number} width - Target width (must be multiple of 8)
+   * @param {number} height - Target height
+   * @param {number} [stripHeight=512] - Height of each strip in rows
+   * @return {{strips: RasterResult[], widthBytes: number, totalHeight: number}}
+   */
+  static pixelsToRasterStrips(
+    image,
+    width,
+    height,
+    stripHeight = this.IMAGE_STRIP_HEIGHT,
+  ) {
+    this.validateImage(image);
+    this.validateDimensions(width, height);
+
+    const strips = [];
+    const totalStrips = Math.ceil(height / stripHeight);
+
+    for (let s = 0; s < totalStrips; s++) {
+      strips.push(
+        this.pixelsToRasterStrip(
+          image,
+          width,
+          height,
+          s * stripHeight,
+          stripHeight,
+        ),
+      );
+    }
+
+    return {
+      strips,
+      widthBytes: width >> 3,
+      totalHeight: height,
+    };
+  }
+
+  /**
+   * Convert a single horizontal strip of an image to raster bitmap format.
+   * Used by pixelsToRasterStrips and by the async image path, which converts
+   * one strip at a time so large images can yield control between strips.
+   *
+   * @param {ImageData} image - Source image data
+   * @param {number} width - Target width (must be multiple of 8)
+   * @param {number} height - Total image height in pixels
+   * @param {number} startY - First row of this strip
+   * @param {number} [stripHeight] - Maximum rows in the strip
+   * @return {RasterResult} Raster bitmap data for one strip
+   */
+  static pixelsToRasterStrip(
+    image,
+    width,
+    height,
+    startY,
+    stripHeight = this.IMAGE_STRIP_HEIGHT,
+  ) {
+    const widthBytes = width >> 3; // width / 8
+    const currentStripHeight = Math.min(stripHeight, height - startY);
+    const stripBytes = widthBytes * currentStripHeight;
+
+    const bytes = this.#memoryPool.acquire(stripBytes);
+    const stripData =
+      bytes.length === stripBytes ? bytes : bytes.subarray(0, stripBytes);
+    stripData.fill(0);
+
+    for (let y = 0; y < currentStripHeight; y++) {
+      const srcY = startY + y;
+      const rowOffset = y * widthBytes;
+
+      for (let x = 0; x < width; x += 8) {
+        let byte = 0;
+        for (let b = 0; b < 8; b++) {
+          byte |= this.getPixel(image, x + b, srcY, width, height) << (7 - b);
         }
+        stripData[rowOffset + (x >> 3)] = byte;
+      }
+    }
 
-        // Worst case: no compression possible, need 2 bytes per input byte
-        const maxOutputSize = data.length * 2;
-        const output = this.#memoryPool.acquire(maxOutputSize);
-        let outputIndex = 0;
+    return {
+      data: stripData,
+      widthBytes,
+      height: currentStripHeight,
+    };
+  }
 
-        let i = 0;
-        while (i < data.length) {
-            const currentByte = data[i];
-            let runLength = 1;
+  /**
+   * Build multiple ESC/POS raster commands from strips
+   * Returns array of Uint8Array commands, one per strip
+   *
+   * @param {RasterResult[]} strips - Array of raster strip results
+   * @param {boolean} [useCompression=false] - Use RLE compression
+   * @return {Uint8Array[]} Array of complete GS v 0 commands
+   */
+  static buildRasterCommandsFromStrips(strips, useCompression = false) {
+    const commands = [];
 
-            // Count consecutive identical bytes
+    for (const strip of strips) {
+      const command = this.buildRasterCommand(
+        strip.data,
+        strip.widthBytes,
+        strip.height,
+        useCompression,
+      );
+      commands.push(command.command);
+    }
+
+    return commands;
+  }
+
+  /**
+   * Convert image to column format (24-dot vertical strips)
+   * Used for ESC/POS ESC * command
+   *
+   * @param {ImageData} image - Source image data
+   * @param {number} width - Target width
+   * @param {number} height - Target height
+   * @return {Uint8Array[]} Array of column strip data
+   */
+  static pixelsToColumns(image, width, height) {
+    this.validateImage(image);
+
+    const strips = [];
+    const totalStrips = Math.ceil(height / 24);
+
+    for (let s = 0; s < totalStrips; s++) {
+      const stripY = s * 24;
+      const bytesPerStrip = width * 3;
+      const bytes = this.#memoryPool.acquire(bytesPerStrip);
+      const strip =
+        bytes.length === bytesPerStrip
+          ? bytes
+          : bytes.subarray(0, bytesPerStrip);
+      strip.fill(0);
+
+      for (let x = 0; x < width; x++) {
+        const offset = x * 3;
+
+        // Pack 3 bytes per column (24 pixels vertical)
+        for (let c = 0; c < 3; c++) {
+          let byte = 0;
+          for (let b = 0; b < 8; b++) {
+            byte |=
+              this.getPixel(image, x, stripY + c * 8 + b, width, height) <<
+              (7 - b);
+          }
+          strip[offset + c] = byte;
+        }
+      }
+
+      strips.push(strip);
+    }
+
+    return strips;
+  }
+
+  /**
+   * Compress data using RLE (Run-Length Encoding)
+   * Compatible with ESC/POS GS v 0 mode 1
+   *
+   * RLE format: For runs of identical bytes:
+   * - If run length <= 1: output byte as-is
+   * - If run length > 1: output [count, byte]
+   *
+   * Note: ESC/POS RLE is a simple scheme where:
+   * - Byte values 0x00-0x7F: literal (n+1 bytes follow)
+   * - Byte values 0x80-0xFF: run of (n-0x80+2) copies of next byte
+   *
+   * @param {Uint8Array} data - Data to compress
+   * @return {RLEResult} Compression result
+   */
+  static compressRLE(data) {
+    if (!data || data.length === 0) {
+      return {
+        data: new Uint8Array(0),
+        compressed: false,
+        originalSize: 0,
+        compressedSize: 0,
+        ratio: 1.0,
+      };
+    }
+
+    // Worst case: no compression possible, need 2 bytes per input byte
+    const maxOutputSize = data.length * 2;
+    const output = this.#memoryPool.acquire(maxOutputSize);
+    let outputIndex = 0;
+
+    let i = 0;
+    while (i < data.length) {
+      const currentByte = data[i];
+      let runLength = 1;
+
+      // Count consecutive identical bytes
+      while (
+        i + runLength < data.length &&
+        data[i + runLength] === currentByte &&
+        runLength < this.MAX_RLE_RUN
+      ) {
+        runLength++;
+      }
+
+      if (runLength >= 2) {
+        // Encode as run: [0x80 + (runLength - 2), byte]
+        // This encodes runs of 2-129 bytes
+        if (runLength > 129) {
+          runLength = 129; // Cap at maximum encodable run
+        }
+        output[outputIndex++] = 0x80 + (runLength - 2);
+        output[outputIndex++] = currentByte;
+        i += runLength;
+      } else {
+        // Collect literal bytes (non-repeating)
+        const literalStart = i;
+        let literalCount = 0;
+
+        while (i < data.length && literalCount < 128) {
+          // Check if next bytes form a run
+          if (i + 1 < data.length && data[i] === data[i + 1]) {
+            // Check if run is worth encoding (at least 2)
+            let ahead = 2;
             while (
-                i + runLength < data.length &&
-                data[i + runLength] === currentByte &&
-                runLength < this.MAX_RLE_RUN
+              i + ahead < data.length &&
+              data[i + ahead] === data[i] &&
+              ahead < 3
             ) {
-                runLength++;
+              ahead++;
             }
-
-            if (runLength >= 2) {
-                // Encode as run: [0x80 + (runLength - 2), byte]
-                // This encodes runs of 2-129 bytes
-                if (runLength > 129) {
-                    runLength = 129; // Cap at maximum encodable run
-                }
-                output[outputIndex++] = 0x80 + (runLength - 2);
-                output[outputIndex++] = currentByte;
-                i += runLength;
-            } else {
-                // Collect literal bytes (non-repeating)
-                const literalStart = i;
-                let literalCount = 0;
-
-                while (
-                    i < data.length &&
-                    literalCount < 128
-                ) {
-                    // Check if next bytes form a run
-                    if (i + 1 < data.length && data[i] === data[i + 1]) {
-                        // Check if run is worth encoding (at least 2)
-                        let ahead = 2;
-                        while (
-                            i + ahead < data.length &&
-                            data[i + ahead] === data[i] &&
-                            ahead < 3
-                        ) {
-                            ahead++;
-                        }
-                        if (ahead >= 2) {
-                            break; // Stop literals, encode upcoming run
-                        }
-                    }
-                    literalCount++;
-                    i++;
-                }
-
-                if (literalCount > 0) {
-                    // Encode literals: [literalCount - 1, ...bytes]
-                    output[outputIndex++] = literalCount - 1;
-                    for (let j = 0; j < literalCount; j++) {
-                        output[outputIndex++] = data[literalStart + j];
-                    }
-                }
+            if (ahead >= 2) {
+              break; // Stop literals, encode upcoming run
             }
+          }
+          literalCount++;
+          i++;
         }
 
-        const compressedSize = outputIndex;
-        const compressed = compressedSize < data.length;
-
-        // If compression didn't help, return original
-        if (!compressed) {
-            this.#memoryPool.release(output);
-            return {
-                data: new Uint8Array(data), // Copy to new array
-                compressed: false,
-                originalSize: data.length,
-                compressedSize: data.length,
-                ratio: 1.0,
-            };
+        if (literalCount > 0) {
+          // Encode literals: [literalCount - 1, ...bytes]
+          output[outputIndex++] = literalCount - 1;
+          for (let j = 0; j < literalCount; j++) {
+            output[outputIndex++] = data[literalStart + j];
+          }
         }
-
-        // Create properly sized result
-        const result = new Uint8Array(compressedSize);
-        result.set(output.subarray(0, compressedSize));
-        this.#memoryPool.release(output);
-
-        return {
-            data: result,
-            compressed: true,
-            originalSize: data.length,
-            compressedSize,
-            ratio: compressedSize / data.length,
-        };
+      }
     }
 
-    /**
-     * Decompress RLE data (for testing/verification)
-     * @param {Uint8Array} data - RLE compressed data
-     * @return {Uint8Array} Decompressed data
-     */
-    static decompressRLE(data) {
-        if (!data || data.length === 0) {
-            return new Uint8Array(0);
-        }
+    const compressedSize = outputIndex;
+    const compressed = compressedSize < data.length;
 
-        // Estimate output size (may need to grow)
-        const chunks = [];
-        let i = 0;
+    // If compression didn't help, return original
+    if (!compressed) {
+      this.#memoryPool.release(output);
+      return {
+        data: new Uint8Array(data), // Copy to new array
+        compressed: false,
+        originalSize: data.length,
+        compressedSize: data.length,
+        ratio: 1.0,
+      };
+    }
 
-        while (i < data.length) {
-            const control = data[i++];
+    // Create properly sized result
+    const result = new Uint8Array(compressedSize);
+    result.set(output.subarray(0, compressedSize));
+    this.#memoryPool.release(output);
 
-            if (control >= 0x80) {
-                // Run: repeat next byte (control - 0x80 + 2) times
-                const runLength = control - 0x80 + 2;
-                const value = data[i++];
-                const run = new Uint8Array(runLength);
-                run.fill(value);
-                chunks.push(run);
-            } else {
-                // Literals: copy (control + 1) bytes
-                const literalCount = control + 1;
-                chunks.push(data.slice(i, i + literalCount));
-                i += literalCount;
+    return {
+      data: result,
+      compressed: true,
+      originalSize: data.length,
+      compressedSize,
+      ratio: compressedSize / data.length,
+    };
+  }
+
+  /**
+   * Decompress RLE data (for testing/verification)
+   * @param {Uint8Array} data - RLE compressed data
+   * @return {Uint8Array} Decompressed data
+   */
+  static decompressRLE(data) {
+    if (!data || data.length === 0) {
+      return new Uint8Array(0);
+    }
+
+    // Estimate output size (may need to grow)
+    const chunks = [];
+    let i = 0;
+
+    while (i < data.length) {
+      const control = data[i++];
+
+      if (control >= 0x80) {
+        // Run: repeat next byte (control - 0x80 + 2) times
+        const runLength = control - 0x80 + 2;
+        const value = data[i++];
+        const run = new Uint8Array(runLength);
+        run.fill(value);
+        chunks.push(run);
+      } else {
+        // Literals: copy (control + 1) bytes
+        const literalCount = control + 1;
+        chunks.push(data.slice(i, i + literalCount));
+        i += literalCount;
+      }
+    }
+
+    // Concatenate chunks
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    return result;
+  }
+
+  /**
+   * Generate payload chunks for streaming transmission
+   * Yields metadata-rich chunks for progress tracking and retry logic
+   *
+   * @param {Uint8Array} payload - Complete payload to chunk
+   * @param {number} [chunkSize=512] - Size of each chunk in bytes
+   * @yields {ChunkInfo} Chunk with metadata
+   */
+  static *generateChunks(payload, chunkSize = this.DEFAULT_CHUNK_SIZE) {
+    if (!payload || payload.length === 0) {
+      return;
+    }
+
+    if (chunkSize <= 0) {
+      throw new Error("ImageEncoder: chunkSize must be positive");
+    }
+
+    const totalBytes = payload.length;
+    const totalChunks = Math.ceil(totalBytes / chunkSize);
+
+    for (let i = 0; i < totalChunks; i++) {
+      const byteOffset = i * chunkSize;
+      const endOffset = Math.min(byteOffset + chunkSize, totalBytes);
+      const chunk = payload.subarray(byteOffset, endOffset);
+
+      yield {
+        chunk,
+        index: i,
+        total: totalChunks,
+        isLast: i === totalChunks - 1,
+        byteOffset,
+        totalBytes,
+      };
+    }
+  }
+
+  /**
+   * Async generator for chunked transmission with backpressure support
+   *
+   * @param {Uint8Array} payload - Complete payload to chunk
+   * @param {number} [chunkSize=512] - Size of each chunk in bytes
+   * @param {Function} [onChunkReady] - Optional callback before yielding each chunk
+   * @yields {ChunkInfo} Chunk with metadata
+   */
+  static async *generateChunksAsync(
+    payload,
+    chunkSize = this.DEFAULT_CHUNK_SIZE,
+    onChunkReady,
+  ) {
+    if (!payload || payload.length === 0) {
+      return;
+    }
+
+    if (chunkSize <= 0) {
+      throw new Error("ImageEncoder: chunkSize must be positive");
+    }
+
+    const totalBytes = payload.length;
+    const totalChunks = Math.ceil(totalBytes / chunkSize);
+
+    for (let i = 0; i < totalChunks; i++) {
+      const byteOffset = i * chunkSize;
+      const endOffset = Math.min(byteOffset + chunkSize, totalBytes);
+      const chunk = payload.subarray(byteOffset, endOffset);
+
+      const chunkInfo = {
+        chunk,
+        index: i,
+        total: totalChunks,
+        isLast: i === totalChunks - 1,
+        byteOffset,
+        totalBytes,
+      };
+
+      if (onChunkReady) {
+        await onChunkReady(chunkInfo);
+      }
+
+      yield chunkInfo;
+    }
+  }
+
+  /**
+   * Concatenate multiple Uint8Arrays efficiently
+   * Avoids spread operator and intermediate arrays
+   *
+   * @param {Uint8Array[]} arrays - Arrays to concatenate
+   * @return {Uint8Array} Concatenated result
+   */
+  static concatenate(...arrays) {
+    // Filter out null/undefined and calculate total length
+    const validArrays = arrays.filter((arr) => arr && arr.length > 0);
+    const totalLength = validArrays.reduce((sum, arr) => sum + arr.length, 0);
+
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+
+    for (const arr of validArrays) {
+      result.set(arr, offset);
+      offset += arr.length;
+    }
+
+    return result;
+  }
+
+  /**
+   * Build ESC/POS raster image command (GS v 0)
+   *
+   * @param {Uint8Array} rasterData - Raster bitmap data
+   * @param {number} widthBytes - Width in bytes
+   * @param {number} height - Height in pixels
+   * @param {boolean} [useCompression=false] - Use RLE compression (mode 1)
+   * @return {{command: Uint8Array, compressed: boolean, ratio: number}}
+   */
+  static buildRasterCommand(
+    rasterData,
+    widthBytes,
+    height,
+    useCompression = false,
+  ) {
+    let data = rasterData;
+    let compressed = false;
+    let ratio = 1.0;
+
+    if (useCompression) {
+      const rleResult = this.compressRLE(rasterData);
+      if (rleResult.compressed) {
+        data = rleResult.data;
+        compressed = true;
+        ratio = rleResult.ratio;
+      }
+    }
+
+    // GS v 0 command: 1D 76 30 m xL xH yL yH [data]
+    // m = 0: normal, m = 1: RLE compressed
+    const mode = compressed ? 0x01 : 0x00;
+    const header = new Uint8Array([
+      0x1d,
+      0x76,
+      0x30,
+      mode,
+      widthBytes & 0xff,
+      (widthBytes >> 8) & 0xff,
+      height & 0xff,
+      (height >> 8) & 0xff,
+    ]);
+
+    return {
+      command: this.concatenate(header, data),
+      compressed,
+      ratio,
+    };
+  }
+
+  /**
+   * Build ESC/POS column image command (ESC *)
+   *
+   * @param {Uint8Array} stripData - Column strip data (width * 3 bytes)
+   * @param {number} width - Width in pixels
+   * @return {Uint8Array} Complete command for one strip
+   */
+  static buildColumnCommand(stripData, width) {
+    // ESC * m nL nH [data]
+    // m = 33 (0x21) for 24-dot double-density
+    const header = new Uint8Array([
+      0x1b,
+      0x2a,
+      0x21,
+      width & 0xff,
+      (width >> 8) & 0xff,
+    ]);
+    const footer = new Uint8Array([0x0a]); // Line feed
+
+    return this.concatenate(header, stripData, footer);
+  }
+
+  /**
+   * Build line spacing command
+   * @param {number} dots - Line spacing in dots (0 for default)
+   * @return {Uint8Array}
+   */
+  static buildLineSpacingCommand(dots) {
+    if (dots === 0) {
+      // Reset to default: ESC 2
+      return new Uint8Array([0x1b, 0x32]);
+    }
+    // Set line spacing: ESC 3 n
+    return new Uint8Array([0x1b, 0x33, dots & 0xff]);
+  }
+
+  /**
+   * Build Star PRNT column image command (ESC X)
+   *
+   * @param {Uint8Array} stripData - Column strip data
+   * @param {number} width - Width in pixels
+   * @return {Uint8Array} Complete command for one strip
+   */
+  static buildStarColumnCommand(stripData, width) {
+    // ESC X nL nH [data] LF CR
+    const header = new Uint8Array([
+      0x1b,
+      0x58,
+      width & 0xff,
+      (width >> 8) & 0xff,
+    ]);
+    const footer = new Uint8Array([0x0a, 0x0d]); // LF CR
+
+    return this.concatenate(header, stripData, footer);
+  }
+
+  /**
+   * Release memory pool resources
+   * Call this when encoder is no longer needed
+   */
+  static releasePool() {
+    this.#memoryPool.clear();
+  }
+
+  /**
+   * Return a buffer to the memory pool for reuse. Buffers must only be
+   * released after their contents have been copied elsewhere.
+   * @param {Uint8Array} buffer - Buffer to release
+   */
+  static releaseBuffer(buffer) {
+    if (buffer) {
+      this.#memoryPool.release(buffer);
+    }
+  }
+
+  /**
+   * Process image asynchronously with yielding for large images
+   * Prevents UI blocking on main thread
+   *
+   * @param {ImageData} image - Source image
+   * @param {number} width - Target width
+   * @param {number} height - Target height
+   * @param {'column'|'raster'} mode - Encoding mode
+   * @param {Object} [options] - Processing options
+   * @param {boolean} [options.useCompression=false] - Use RLE compression
+   * @param {number} [options.yieldInterval=1000] - Yield every N pixels
+   * @return {Promise<{commands: Uint8Array[], compressed: boolean}>}
+   */
+  static async processImageAsync(image, width, height, mode, options = {}) {
+    const { useCompression = false } = options;
+
+    this.validateImage(image);
+
+    const commands = [];
+    let compressed = false;
+
+    if (mode === "raster") {
+      // For raster mode, process in horizontal strips
+      const widthBytes = width >> 3;
+      const stripHeight = 50; // Process 50 rows at a time
+      const totalStrips = Math.ceil(height / stripHeight);
+
+      const allData = this.#memoryPool.acquire(widthBytes * height);
+      let processedRows = 0;
+
+      for (let strip = 0; strip < totalStrips; strip++) {
+        const startY = strip * stripHeight;
+        const endY = Math.min(startY + stripHeight, height);
+
+        for (let y = startY; y < endY; y++) {
+          const rowOffset = y * widthBytes;
+          for (let x = 0; x < width; x += 8) {
+            let byte = 0;
+            for (let b = 0; b < 8; b++) {
+              byte |= this.getPixel(image, x + b, y, width, height) << (7 - b);
             }
+            allData[rowOffset + (x >> 3)] = byte;
+          }
+          processedRows++;
+
+          // Yield control periodically
+          if (processedRows % 50 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
         }
+      }
 
-        // Concatenate chunks
-        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of chunks) {
-            result.set(chunk, offset);
-            offset += chunk.length;
-        }
+      const rasterData = allData.subarray(0, widthBytes * height);
+      const result = this.buildRasterCommand(
+        rasterData,
+        widthBytes,
+        height,
+        useCompression,
+      );
+      commands.push(result.command);
+      compressed = result.compressed;
 
-        return result;
-    }
+      this.#memoryPool.release(allData);
+    } else {
+      // Column mode
+      commands.push(this.buildLineSpacingCommand(36)); // 24-dot spacing
 
-    /**
-     * Generate payload chunks for streaming transmission
-     * Yields metadata-rich chunks for progress tracking and retry logic
-     *
-     * @param {Uint8Array} payload - Complete payload to chunk
-     * @param {number} [chunkSize=512] - Size of each chunk in bytes
-     * @yields {ChunkInfo} Chunk with metadata
-     */
-    static * generateChunks(payload, chunkSize = this.DEFAULT_CHUNK_SIZE) {
-        if (!payload || payload.length === 0) {
-            return;
-        }
+      const totalStrips = Math.ceil(height / 24);
 
-        if (chunkSize <= 0) {
-            throw new Error('ImageEncoder: chunkSize must be positive');
-        }
+      for (let s = 0; s < totalStrips; s++) {
+        const stripY = s * 24;
+        const bytesPerStrip = width * 3;
+        const strip = new Uint8Array(bytesPerStrip);
 
-        const totalBytes = payload.length;
-        const totalChunks = Math.ceil(totalBytes / chunkSize);
+        for (let x = 0; x < width; x++) {
+          const offset = x * 3;
 
-        for (let i = 0; i < totalChunks; i++) {
-            const byteOffset = i * chunkSize;
-            const endOffset = Math.min(byteOffset + chunkSize, totalBytes);
-            const chunk = payload.subarray(byteOffset, endOffset);
-
-            yield {
-                chunk,
-                index: i,
-                total: totalChunks,
-                isLast: i === totalChunks - 1,
-                byteOffset,
-                totalBytes,
-            };
-        }
-    }
-
-    /**
-     * Async generator for chunked transmission with backpressure support
-     *
-     * @param {Uint8Array} payload - Complete payload to chunk
-     * @param {number} [chunkSize=512] - Size of each chunk in bytes
-     * @param {Function} [onChunkReady] - Optional callback before yielding each chunk
-     * @yields {ChunkInfo} Chunk with metadata
-     */
-    static async* generateChunksAsync(payload, chunkSize = this.DEFAULT_CHUNK_SIZE, onChunkReady) {
-        if (!payload || payload.length === 0) {
-            return;
-        }
-
-        if (chunkSize <= 0) {
-            throw new Error('ImageEncoder: chunkSize must be positive');
-        }
-
-        const totalBytes = payload.length;
-        const totalChunks = Math.ceil(totalBytes / chunkSize);
-
-        for (let i = 0; i < totalChunks; i++) {
-            const byteOffset = i * chunkSize;
-            const endOffset = Math.min(byteOffset + chunkSize, totalBytes);
-            const chunk = payload.subarray(byteOffset, endOffset);
-
-            const chunkInfo = {
-                chunk,
-                index: i,
-                total: totalChunks,
-                isLast: i === totalChunks - 1,
-                byteOffset,
-                totalBytes,
-            };
-
-            if (onChunkReady) {
-                await onChunkReady(chunkInfo);
+          for (let c = 0; c < 3; c++) {
+            let byte = 0;
+            for (let b = 0; b < 8; b++) {
+              byte |=
+                this.getPixel(image, x, stripY + c * 8 + b, width, height) <<
+                (7 - b);
             }
+            strip[offset + c] = byte;
+          }
 
-            yield chunkInfo;
-        }
-    }
-
-    /**
-     * Concatenate multiple Uint8Arrays efficiently
-     * Avoids spread operator and intermediate arrays
-     *
-     * @param {Uint8Array[]} arrays - Arrays to concatenate
-     * @return {Uint8Array} Concatenated result
-     */
-    static concatenate(...arrays) {
-        // Filter out null/undefined and calculate total length
-        const validArrays = arrays.filter((arr) => arr && arr.length > 0);
-        const totalLength = validArrays.reduce((sum, arr) => sum + arr.length, 0);
-
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-
-        for (const arr of validArrays) {
-            result.set(arr, offset);
-            offset += arr.length;
+          // Yield control periodically
+          if (x % 100 === 0 && x > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
         }
 
-        return result;
+        commands.push(this.buildColumnCommand(strip, width));
+      }
+
+      commands.push(this.buildLineSpacingCommand(0)); // Reset to default
     }
 
-    /**
-     * Build ESC/POS raster image command (GS v 0)
-     *
-     * @param {Uint8Array} rasterData - Raster bitmap data
-     * @param {number} widthBytes - Width in bytes
-     * @param {number} height - Height in pixels
-     * @param {boolean} [useCompression=false] - Use RLE compression (mode 1)
-     * @return {{command: Uint8Array, compressed: boolean, ratio: number}}
-     */
-    static buildRasterCommand(rasterData, widthBytes, height, useCompression = false) {
-        let data = rasterData;
-        let compressed = false;
-        let ratio = 1.0;
-
-        if (useCompression) {
-            const rleResult = this.compressRLE(rasterData);
-            if (rleResult.compressed) {
-                data = rleResult.data;
-                compressed = true;
-                ratio = rleResult.ratio;
-            }
-        }
-
-        // GS v 0 command: 1D 76 30 m xL xH yL yH [data]
-        // m = 0: normal, m = 1: RLE compressed
-        const mode = compressed ? 0x01 : 0x00;
-        const header = new Uint8Array([
-            0x1d, 0x76, 0x30, mode,
-            widthBytes & 0xff, (widthBytes >> 8) & 0xff,
-            height & 0xff, (height >> 8) & 0xff,
-        ]);
-
-        return {
-            command: this.concatenate(header, data),
-            compressed,
-            ratio,
-        };
-    }
-
-    /**
-     * Build ESC/POS column image command (ESC *)
-     *
-     * @param {Uint8Array} stripData - Column strip data (width * 3 bytes)
-     * @param {number} width - Width in pixels
-     * @return {Uint8Array} Complete command for one strip
-     */
-    static buildColumnCommand(stripData, width) {
-        // ESC * m nL nH [data]
-        // m = 33 (0x21) for 24-dot double-density
-        const header = new Uint8Array([
-            0x1b, 0x2a, 0x21,
-            width & 0xff, (width >> 8) & 0xff,
-        ]);
-        const footer = new Uint8Array([0x0a]); // Line feed
-
-        return this.concatenate(header, stripData, footer);
-    }
-
-    /**
-     * Build line spacing command
-     * @param {number} dots - Line spacing in dots (0 for default)
-     * @return {Uint8Array}
-     */
-    static buildLineSpacingCommand(dots) {
-        if (dots === 0) {
-            // Reset to default: ESC 2
-            return new Uint8Array([0x1b, 0x32]);
-        }
-        // Set line spacing: ESC 3 n
-        return new Uint8Array([0x1b, 0x33, dots & 0xff]);
-    }
-
-    /**
-     * Build Star PRNT column image command (ESC X)
-     *
-     * @param {Uint8Array} stripData - Column strip data
-     * @param {number} width - Width in pixels
-     * @return {Uint8Array} Complete command for one strip
-     */
-    static buildStarColumnCommand(stripData, width) {
-        // ESC X nL nH [data] LF CR
-        const header = new Uint8Array([
-            0x1b, 0x58,
-            width & 0xff, (width >> 8) & 0xff,
-        ]);
-        const footer = new Uint8Array([0x0a, 0x0d]); // LF CR
-
-        return this.concatenate(header, stripData, footer);
-    }
-
-    /**
-     * Release memory pool resources
-     * Call this when encoder is no longer needed
-     */
-    static releasePool() {
-        this.#memoryPool.clear();
-    }
-
-    /**
-     * Process image asynchronously with yielding for large images
-     * Prevents UI blocking on main thread
-     *
-     * @param {ImageData} image - Source image
-     * @param {number} width - Target width
-     * @param {number} height - Target height
-     * @param {'column'|'raster'} mode - Encoding mode
-     * @param {Object} [options] - Processing options
-     * @param {boolean} [options.useCompression=false] - Use RLE compression
-     * @param {number} [options.yieldInterval=1000] - Yield every N pixels
-     * @return {Promise<{commands: Uint8Array[], compressed: boolean}>}
-     */
-    static async processImageAsync(image, width, height, mode, options = {}) {
-        const { useCompression = false } = options;
-
-        this.validateImage(image);
-
-        const commands = [];
-        let compressed = false;
-
-        if (mode === 'raster') {
-            // For raster mode, process in horizontal strips
-            const widthBytes = width >> 3;
-            const stripHeight = 50; // Process 50 rows at a time
-            const totalStrips = Math.ceil(height / stripHeight);
-
-            const allData = this.#memoryPool.acquire(widthBytes * height);
-            let processedRows = 0;
-
-            for (let strip = 0; strip < totalStrips; strip++) {
-                const startY = strip * stripHeight;
-                const endY = Math.min(startY + stripHeight, height);
-
-                for (let y = startY; y < endY; y++) {
-                    const rowOffset = y * widthBytes;
-                    for (let x = 0; x < width; x += 8) {
-                        let byte = 0;
-                        for (let b = 0; b < 8; b++) {
-                            byte |= this.getPixel(image, x + b, y, width, height) << (7 - b);
-                        }
-                        allData[rowOffset + (x >> 3)] = byte;
-                    }
-                    processedRows++;
-
-                    // Yield control periodically
-                    if (processedRows % 50 === 0) {
-                        await new Promise((resolve) => setTimeout(resolve, 0));
-                    }
-                }
-            }
-
-            const rasterData = allData.subarray(0, widthBytes * height);
-            const result = this.buildRasterCommand(rasterData, widthBytes, height, useCompression);
-            commands.push(result.command);
-            compressed = result.compressed;
-
-            this.#memoryPool.release(allData);
-        } else {
-            // Column mode
-            commands.push(this.buildLineSpacingCommand(36)); // 24-dot spacing
-
-            const totalStrips = Math.ceil(height / 24);
-
-            for (let s = 0; s < totalStrips; s++) {
-                const stripY = s * 24;
-                const bytesPerStrip = width * 3;
-                const strip = new Uint8Array(bytesPerStrip);
-
-                for (let x = 0; x < width; x++) {
-                    const offset = x * 3;
-
-                    for (let c = 0; c < 3; c++) {
-                        let byte = 0;
-                        for (let b = 0; b < 8; b++) {
-                            byte |= this.getPixel(image, x, stripY + (c * 8) + b, width, height) << (7 - b);
-                        }
-                        strip[offset + c] = byte;
-                    }
-
-                    // Yield control periodically
-                    if (x % 100 === 0 && x > 0) {
-                        await new Promise((resolve) => setTimeout(resolve, 0));
-                    }
-                }
-
-                commands.push(this.buildColumnCommand(strip, width));
-            }
-
-            commands.push(this.buildLineSpacingCommand(0)); // Reset to default
-        }
-
-        return { commands, compressed };
-    }
+    return { commands, compressed };
+  }
 }
 
 /**
@@ -856,39 +955,39 @@ class ImageEncoder {
  */
 class LanguageEscPos {
   /**
-     * Initialize the printer
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Initialize the printer
+   * @return {Array}         Array of bytes to send to the printer
+   */
   initialize() {
     return [
       {
-        type: 'initialize',
+        type: "initialize",
         payload: [0x1b, 0x40],
       },
       {
-        type: 'character-mode',
-        value: 'single byte',
+        type: "character-mode",
+        value: "single byte",
         payload: [0x1c, 0x2e],
       },
       {
-        type: 'font',
-        value: 'A',
+        type: "font",
+        value: "A",
         payload: [0x1b, 0x4d, 0x00],
       },
     ];
   }
 
   /**
-     * Change the font
-     * @param {string} value    Font type ('A', 'B', or more)
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change the font
+   * @param {string} value    Font type ('A', 'B', or more)
+   * @return {Array}         Array of bytes to send to the printer
+   */
   font(value) {
     const type = value.charCodeAt(0) - 0x41;
 
     return [
       {
-        type: 'font',
+        type: "font",
         value,
         payload: [0x1b, 0x4d, type],
       },
@@ -896,22 +995,22 @@ class LanguageEscPos {
   }
 
   /**
-     * Change the alignment
-     * @param {string} value    Alignment value ('left', 'center', 'right')
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change the alignment
+   * @param {string} value    Alignment value ('left', 'center', 'right')
+   * @return {Array}         Array of bytes to send to the printer
+   */
   align(value) {
     let align = 0x00;
 
-    if (value === 'center') {
+    if (value === "center") {
       align = 0x01;
-    } else if (value === 'right') {
+    } else if (value === "right") {
       align = 0x02;
     }
 
     return [
       {
-        type: 'align',
+        type: "align",
         value,
         payload: [0x1b, 0x61, align],
       },
@@ -919,55 +1018,62 @@ class LanguageEscPos {
   }
 
   /**
-     * Generate a barcode
-     * @param {string} value        Value to encode
-     * @param {string|number} symbology    Barcode symbology
-     * @param {object} options      Configuration object
-     * @return {Array}             Array of bytes to send to the printer
-     */
+   * Generate a barcode
+   * @param {string} value        Value to encode
+   * @param {string|number} symbology    Barcode symbology
+   * @param {object} options      Configuration object
+   * @return {Array}             Array of bytes to send to the printer
+   */
   barcode(value, symbology, options) {
     const result = [];
 
     const symbologies = {
-      'upca': 0x00,
-      'upce': 0x01,
-      'ean13': 0x02,
-      'ean8': 0x03,
-      'code39': 0x04,
-      'coda39': 0x04, /* typo, leave here for backwards compatibility */
-      'itf': 0x05,
-      'interleaved-2-of-5': 0x05,
-      'nw-7': 0x06,
-      'codabar': 0x06,
-      'code93': 0x48,
-      'code128': 0x49,
-      'gs1-128': 0x48,
-      'gs1-databar-omni': 0x4b,
-      'gs1-databar-truncated': 0x4c,
-      'gs1-databar-limited': 0x4d,
-      'gs1-databar-expanded': 0x4e,
-      'code128-auto': 0x4f,
+      upca: 0x00,
+      upce: 0x01,
+      ean13: 0x02,
+      ean8: 0x03,
+      code39: 0x04,
+      coda39: 0x04 /* typo, leave here for backwards compatibility */,
+      itf: 0x05,
+      "interleaved-2-of-5": 0x05,
+      "nw-7": 0x06,
+      codabar: 0x06,
+      code93: 0x48,
+      code128: 0x49,
+      "gs1-128": 0x48,
+      "gs1-databar-omni": 0x4b,
+      "gs1-databar-truncated": 0x4c,
+      "gs1-databar-limited": 0x4d,
+      "gs1-databar-expanded": 0x4e,
+      "code128-auto": 0x4f,
     };
 
-    if (typeof symbology === 'string' && typeof symbologies[symbology] === 'undefined') {
+    if (
+      typeof symbology === "string" &&
+      typeof symbologies[symbology] === "undefined"
+    ) {
       throw new Error(`Symbology '${symbology}' not supported by language`);
     }
 
     /* Calculate segment width */
 
     if (options.width < 1 || options.width > 3) {
-      throw new Error('Width must be between 1 and 3');
+      throw new Error("Width must be between 1 and 3");
     }
 
     let width = options.width + 1;
 
-    if (symbology === 'itf') {
+    if (symbology === "itf") {
       width = options.width * 2;
     }
 
-    if (symbology === 'gs1-128' || symbology === 'gs1-databar-omni' ||
-      symbology === 'gs1-databar-truncated' || symbology === 'gs1-databar-limited' ||
-      symbology === 'gs1-databar-expanded') {
+    if (
+      symbology === "gs1-128" ||
+      symbology === "gs1-databar-omni" ||
+      symbology === "gs1-databar-truncated" ||
+      symbology === "gs1-databar-limited" ||
+      symbology === "gs1-databar-expanded"
+    ) {
       width = options.width;
     }
 
@@ -975,316 +1081,347 @@ class LanguageEscPos {
 
     result.push(
       {
-        type: 'barcode',
-        property: 'height',
+        type: "barcode",
+        property: "height",
         value: options.height,
         payload: [0x1d, 0x68, options.height],
       },
       {
-        type: 'barcode',
-        property: 'width',
+        type: "barcode",
+        property: "width",
         value: options.width,
         payload: [0x1d, 0x77, width],
       },
       {
-        type: 'barcode',
-        property: 'text',
+        type: "barcode",
+        property: "text",
         value: options.text,
         payload: [0x1d, 0x48, options.text ? 0x02 : 0x00],
       },
     );
 
-
     /* Encode barcode */
 
-    if (symbology == 'code128' && !value.startsWith('{')) {
-      value = '{B' + value;
+    if (symbology == "code128" && !value.startsWith("{")) {
+      value = "{B" + value;
     }
 
-    if (symbology == 'gs1-128') {
-      value = value.replace(/[()*]/g, '');
+    if (symbology == "gs1-128") {
+      value = value.replace(/[()*]/g, "");
     }
 
-    const bytes = CodepageEncoder.encode(value, 'ascii');
+    const bytes = CodepageEncoder.encode(value, "ascii");
 
-    const identifier = typeof symbology === 'string' ? symbologies[symbology] : symbology;
+    const identifier =
+      typeof symbology === "string" ? symbologies[symbology] : symbology;
 
     if (identifier > 0x40) {
       /* Function B symbologies */
 
-      result.push(
-        {
-          type: 'barcode',
-          value: { symbology: symbology, data: value },
-          payload: [0x1d, 0x6b, identifier, bytes.length, ...bytes],
-        },
-      );
+      result.push({
+        type: "barcode",
+        value: { symbology: symbology, data: value },
+        payload: [0x1d, 0x6b, identifier, bytes.length, ...bytes],
+      });
     } else {
       /* Function A symbologies */
 
-      result.push(
-        {
-          type: 'barcode',
-          value: { symbology: symbology, data: value },
-          payload: [0x1d, 0x6b, identifier, ...bytes, 0x00],
-        },
-      );
+      result.push({
+        type: "barcode",
+        value: { symbology: symbology, data: value },
+        payload: [0x1d, 0x6b, identifier, ...bytes, 0x00],
+      });
     }
 
     return result;
   }
 
   /**
-     * Generate a QR code
-     * @param {string} value        Value to encode
-     * @param {object} options      Configuration object
-     * @return {Array}             Array of bytes to send to the printer
-     */
+   * Generate a QR code
+   * @param {string} value        Value to encode
+   * @param {object} options      Configuration object
+   * @return {Array}             Array of bytes to send to the printer
+   */
   qrcode(value, options) {
     const result = [];
 
     /* Model */
 
-    if (typeof options.model === 'number') {
+    if (typeof options.model === "number") {
       const models = {
         1: 0x31,
         2: 0x32,
       };
 
       if (options.model in models) {
-        result.push(
-          {
-            type: 'qrcode',
-            property: 'model',
-            value: options.model,
-            payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, models[options.model], 0x00],
-          },
-        );
+        result.push({
+          type: "qrcode",
+          property: "model",
+          value: options.model,
+          payload: [
+            0x1d,
+            0x28,
+            0x6b,
+            0x04,
+            0x00,
+            0x31,
+            0x41,
+            models[options.model],
+            0x00,
+          ],
+        });
       } else {
-        throw new Error('Model must be 1 or 2');
+        throw new Error("Model must be 1 or 2");
       }
     }
 
     /* Size */
 
-    if (typeof options.size !== 'number') {
-      throw new Error('Size must be a number');
+    if (typeof options.size !== "number") {
+      throw new Error("Size must be a number");
     }
 
     if (options.size < 1 || options.size > 8) {
-      throw new Error('Size must be between 1 and 8');
+      throw new Error("Size must be between 1 and 8");
     }
 
-    result.push(
-      {
-        type: 'qrcode',
-        property: 'size',
-        value: options.size,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, options.size],
-      },
-    );
+    result.push({
+      type: "qrcode",
+      property: "size",
+      value: options.size,
+      payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, options.size],
+    });
 
     /* Error level */
 
     const errorlevels = {
-      'l': 0x30,
-      'm': 0x31,
-      'q': 0x32,
-      'h': 0x33,
+      l: 0x30,
+      m: 0x31,
+      q: 0x32,
+      h: 0x33,
     };
 
     if (options.errorlevel in errorlevels) {
-      result.push(
-        {
-          type: 'qrcode',
-          property: 'errorlevel',
-          value: options.errorlevel,
-          payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, errorlevels[options.errorlevel]],
-        },
-      );
+      result.push({
+        type: "qrcode",
+        property: "errorlevel",
+        value: options.errorlevel,
+        payload: [
+          0x1d,
+          0x28,
+          0x6b,
+          0x03,
+          0x00,
+          0x31,
+          0x45,
+          errorlevels[options.errorlevel],
+        ],
+      });
     } else {
-      throw new Error('Error level must be l, m, q or h');
+      throw new Error("Error level must be l, m, q or h");
     }
 
     /* Data */
 
-    const bytes = CodepageEncoder.encode(value, 'iso8859-1');
+    const bytes = CodepageEncoder.encode(value, "iso8859-1");
     const length = bytes.length + 3;
 
-    result.push(
-      {
-        type: 'qrcode',
-        property: 'data',
-        value,
-        payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x31, 0x50, 0x30, ...bytes],
-      },
-    );
+    result.push({
+      type: "qrcode",
+      property: "data",
+      value,
+      payload: [
+        0x1d,
+        0x28,
+        0x6b,
+        length & 0xff,
+        (length >> 8) & 0xff,
+        0x31,
+        0x50,
+        0x30,
+        ...bytes,
+      ],
+    });
 
     /* Print QR code */
 
-    result.push(
-      {
-        type: 'qrcode',
-        command: 'print',
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30],
-      },
-    );
+    result.push({
+      type: "qrcode",
+      command: "print",
+      payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30],
+    });
 
     return result;
   }
 
   /**
-     * Generate a PDF417 code
-     * @param {string} value        Value to encode
-     * @param {object} options      Configuration object
-     * @return {Array}             Array of bytes to send to the printer
-     */
+   * Generate a PDF417 code
+   * @param {string} value        Value to encode
+   * @param {object} options      Configuration object
+   * @return {Array}             Array of bytes to send to the printer
+   */
   pdf417(value, options) {
     const result = [];
 
     /* Columns */
 
-    if (typeof options.columns !== 'number') {
-      throw new Error('Columns must be a number');
+    if (typeof options.columns !== "number") {
+      throw new Error("Columns must be a number");
     }
 
-    if (options.columns !== 0 && (options.columns < 1 || options.columns > 30)) {
-      throw new Error('Columns must be 0, or between 1 and 30');
+    if (
+      options.columns !== 0 &&
+      (options.columns < 1 || options.columns > 30)
+    ) {
+      throw new Error("Columns must be 0, or between 1 and 30");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'columns',
-        value: options.columns,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x41, options.columns],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "columns",
+      value: options.columns,
+      payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x41, options.columns],
+    });
 
     /* Rows */
 
-    if (typeof options.rows !== 'number') {
-      throw new Error('Rows must be a number');
+    if (typeof options.rows !== "number") {
+      throw new Error("Rows must be a number");
     }
 
     if (options.rows !== 0 && (options.rows < 3 || options.rows > 90)) {
-      throw new Error('Rows must be 0, or between 3 and 90');
+      throw new Error("Rows must be 0, or between 3 and 90");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'rows',
-        value: options.rows,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x42, options.rows],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "rows",
+      value: options.rows,
+      payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x42, options.rows],
+    });
 
     /* Width */
 
-    if (typeof options.width !== 'number') {
-      throw new Error('Width must be a number');
+    if (typeof options.width !== "number") {
+      throw new Error("Width must be a number");
     }
 
     if (options.width < 2 || options.width > 8) {
-      throw new Error('Width must be between 2 and 8');
+      throw new Error("Width must be between 2 and 8");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'width',
-        value: options.width,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x43, options.width],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "width",
+      value: options.width,
+      payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x43, options.width],
+    });
 
     /* Height */
 
-    if (typeof options.height !== 'number') {
-      throw new Error('Height must be a number');
+    if (typeof options.height !== "number") {
+      throw new Error("Height must be a number");
     }
 
     if (options.height < 2 || options.height > 8) {
-      throw new Error('Height must be between 2 and 8');
+      throw new Error("Height must be between 2 and 8");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'height',
-        value: options.height,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x44, options.height],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "height",
+      value: options.height,
+      payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x44, options.height],
+    });
 
     /* Error level */
 
-    if (typeof options.errorlevel !== 'number') {
-      throw new Error('Errorlevel must be a number');
+    if (typeof options.errorlevel !== "number") {
+      throw new Error("Errorlevel must be a number");
     }
 
     if (options.errorlevel < 0 || options.errorlevel > 8) {
-      throw new Error('Errorlevel must be between 0 and 8');
+      throw new Error("Errorlevel must be between 0 and 8");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'errorlevel',
-        value: options.errorlevel,
-        payload: [0x1d, 0x28, 0x6b, 0x04, 0x00, 0x30, 0x45, 0x30, options.errorlevel + 0x30],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "errorlevel",
+      value: options.errorlevel,
+      payload: [
+        0x1d,
+        0x28,
+        0x6b,
+        0x04,
+        0x00,
+        0x30,
+        0x45,
+        0x30,
+        options.errorlevel + 0x30,
+      ],
+    });
 
     /* Model: standard or truncated */
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'truncated',
-        value: !!options.truncated,
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x46, options.truncated ? 0x01 : 0x00],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "truncated",
+      value: !!options.truncated,
+      payload: [
+        0x1d,
+        0x28,
+        0x6b,
+        0x03,
+        0x00,
+        0x30,
+        0x46,
+        options.truncated ? 0x01 : 0x00,
+      ],
+    });
 
     /* Data */
 
-    const bytes = CodepageEncoder.encode(value, 'ascii');
+    const bytes = CodepageEncoder.encode(value, "ascii");
     const length = bytes.length + 3;
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'data',
-        value,
-        payload: [0x1d, 0x28, 0x6b, length & 0xff, (length >> 8) & 0xff, 0x30, 0x50, 0x30, ...bytes],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "data",
+      value,
+      payload: [
+        0x1d,
+        0x28,
+        0x6b,
+        length & 0xff,
+        (length >> 8) & 0xff,
+        0x30,
+        0x50,
+        0x30,
+        ...bytes,
+      ],
+    });
 
     /* Print PDF417 code */
 
-    result.push(
-      {
-        type: 'pdf417',
-        command: 'print',
-        payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x51, 0x30],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      command: "print",
+      payload: [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x30, 0x51, 0x30],
+    });
 
     return result;
   }
 
   /**
-     * Encode an image
-     * @param {ImageData} image     ImageData object
-     * @param {number} width        Width of the image
-     * @param {number} height       Height of the image
-     * @param {string} mode         Image encoding mode ('column' or 'raster')
-     * @param {Object} [options]    Additional options
-     * @param {boolean} [options.supportsCompression=false] Use RLE compression if supported
-     * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
-     */
+   * Encode an image
+   * @param {ImageData} image     ImageData object
+   * @param {number} width        Width of the image
+   * @param {number} height       Height of the image
+   * @param {string} mode         Image encoding mode ('column' or 'raster')
+   * @param {Object} [options]    Additional options
+   * @param {boolean} [options.supportsCompression=false] Use RLE compression if supported
+   * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
+   */
   image(image, width, height, mode, options = {}) {
     const { supportsCompression = false } = options;
 
@@ -1295,10 +1432,22 @@ class LanguageEscPos {
     const shouldUseAsync = isLargeImage || isWideImage;
 
     if (shouldUseAsync) {
-      return this._processImageAsync(image, width, height, mode, supportsCompression);
+      return this._processImageAsync(
+        image,
+        width,
+        height,
+        mode,
+        supportsCompression,
+      );
     }
 
-    return this._processImageSync(image, width, height, mode, supportsCompression);
+    return this._processImageSync(
+      image,
+      width,
+      height,
+      mode,
+      supportsCompression,
+    );
   }
 
   /**
@@ -1315,7 +1464,7 @@ class LanguageEscPos {
   _processImageSync(image, width, height, mode, useCompression) {
     const result = [];
 
-    if (mode === 'raster') {
+    if (mode === "raster") {
       // Use strip-based encoding for all images to handle large receipts
       // Each strip generates a separate GS v 0 command - printers handle as continuous print
       const { strips } = ImageEncoder.pixelsToRasterStrips(
@@ -1334,15 +1483,18 @@ class LanguageEscPos {
         );
 
         result.push({
-          type: 'image',
-          command: 'raster',
-          value: 'raster',
+          type: "image",
+          command: "raster",
+          value: "raster",
           width,
           height: strip.height,
           compressed: command.compressed,
           compressionRatio: command.ratio,
           payload: command.command, // Keep as Uint8Array to avoid memory duplication
         });
+
+        // The strip buffer was copied into the command payload.
+        ImageEncoder.releaseBuffer(strip.data);
       }
     } else {
       // Column mode (ESC *)
@@ -1350,27 +1502,30 @@ class LanguageEscPos {
 
       // Set 24-dot line spacing
       result.push({
-        type: 'line-spacing',
-        value: '24 dots',
+        type: "line-spacing",
+        value: "24 dots",
         payload: [0x1b, 0x33, 0x24],
       });
 
       for (const stripData of strips) {
         const command = ImageEncoder.buildColumnCommand(stripData, width);
         result.push({
-          type: 'image',
-          property: 'data',
-          value: 'column',
+          type: "image",
+          property: "data",
+          value: "column",
           width,
           height: 24,
           payload: command, // Keep as Uint8Array to avoid memory duplication
         });
+
+        // The strip buffer was copied into the command payload.
+        ImageEncoder.releaseBuffer(stripData);
       }
 
       // Reset line spacing
       result.push({
-        type: 'line-spacing',
-        value: 'default',
+        type: "line-spacing",
+        value: "default",
         payload: [0x1b, 0x32],
       });
     }
@@ -1393,17 +1548,24 @@ class LanguageEscPos {
   async _processImageAsync(image, width, height, mode, useCompression) {
     const result = [];
 
-    if (mode === 'raster') {
-      // Use strip-based encoding for large images to prevent memory issues
-      const { strips } = ImageEncoder.pixelsToRasterStrips(
-        image,
-        width,
-        height,
-        ImageEncoder.IMAGE_STRIP_HEIGHT,
-      );
+    if (mode === "raster") {
+      // Convert and encode strip by strip so the pixel conversion itself is
+      // interrupted. Converting all strips up front (like the sync path does)
+      // would still block the main thread for large images.
+      ImageEncoder.validateImage(image);
+      ImageEncoder.validateDimensions(width, height);
 
-      for (let i = 0; i < strips.length; i++) {
-        const strip = strips[i];
+      const totalStrips = Math.ceil(height / ImageEncoder.IMAGE_STRIP_HEIGHT);
+
+      for (let i = 0; i < totalStrips; i++) {
+        const strip = ImageEncoder.pixelsToRasterStrip(
+          image,
+          width,
+          height,
+          i * ImageEncoder.IMAGE_STRIP_HEIGHT,
+          ImageEncoder.IMAGE_STRIP_HEIGHT,
+        );
+
         const command = ImageEncoder.buildRasterCommand(
           strip.data,
           strip.widthBytes,
@@ -1412,9 +1574,9 @@ class LanguageEscPos {
         );
 
         result.push({
-          type: 'image',
-          command: 'raster',
-          value: 'raster',
+          type: "image",
+          command: "raster",
+          value: "raster",
           width,
           height: strip.height,
           compressed: command.compressed,
@@ -1422,10 +1584,11 @@ class LanguageEscPos {
           payload: command.command, // Keep as Uint8Array to avoid memory duplication
         });
 
-        // Yield control periodically to prevent UI blocking
-        if (i % 4 === 0 && i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
+        // The strip buffer was copied into the command payload.
+        ImageEncoder.releaseBuffer(strip.data);
+
+        // Yield control after every strip to prevent UI blocking
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
     } else {
       // Column mode - use existing processImageAsync for column strips
@@ -1443,22 +1606,22 @@ class LanguageEscPos {
         if (i === 0) {
           // First command is line spacing
           result.push({
-            type: 'line-spacing',
-            value: '24 dots',
+            type: "line-spacing",
+            value: "24 dots",
             payload: command, // Keep as Uint8Array to avoid memory duplication
           });
         } else if (i === commands.length - 1) {
           // Last command is line spacing reset
           result.push({
-            type: 'line-spacing',
-            value: 'default',
+            type: "line-spacing",
+            value: "default",
             payload: command, // Keep as Uint8Array to avoid memory duplication
           });
         } else {
           result.push({
-            type: 'image',
-            property: 'data',
-            value: 'column',
+            type: "image",
+            property: "data",
+            value: "column",
             width,
             height: 24,
             payload: command, // Keep as Uint8Array to avoid memory duplication
@@ -1471,62 +1634,61 @@ class LanguageEscPos {
   }
 
   /**
-     * Cut the paper
-     * @param {string} value    Cut type ('full' or 'partial')
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Cut the paper
+   * @param {string} value    Cut type ('full' or 'partial')
+   * @return {Array}         Array of bytes to send to the printer
+   */
   cut(value) {
     let data = 0x00;
 
-    if (value == 'partial') {
+    if (value == "partial") {
       data = 0x01;
     }
 
     return [
       {
-        type: 'cut',
+        type: "cut",
         payload: [0x1d, 0x56, data],
       },
     ];
   }
 
   /**
-     * Send a pulse to the cash drawer
-     * @param {number} device   Device number
-     * @param {number} on       Pulse ON time
-     * @param {number} off      Pulse OFF time
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Send a pulse to the cash drawer
+   * @param {number} device   Device number
+   * @param {number} on       Pulse ON time
+   * @param {number} off      Pulse OFF time
+   * @return {Array}         Array of bytes to send to the printer
+   */
   pulse(device, on, off) {
-    if (typeof device === 'undefined') {
+    if (typeof device === "undefined") {
       device = 0;
     }
 
-    if (typeof on === 'undefined') {
+    if (typeof on === "undefined") {
       on = 100;
     }
 
-    if (typeof off === 'undefined') {
+    if (typeof off === "undefined") {
       off = 500;
     }
 
     on = Math.min(500, Math.round(on / 2));
     off = Math.min(500, Math.round(off / 2));
 
-
     return [
       {
-        type: 'pulse',
+        type: "pulse",
         payload: [0x1b, 0x70, device ? 1 : 0, on & 0xff, off & 0xff],
       },
     ];
   }
 
   /**
-     * Enable or disable bold text
-     * @param {boolean} value   Enable or disable bold text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable bold text
+   * @param {boolean} value   Enable or disable bold text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   bold(value) {
     let data = 0x00;
 
@@ -1534,33 +1696,31 @@ class LanguageEscPos {
       data = 0x01;
     }
 
-    return [
-      0x1b, 0x45, data,
-    ];
+    return [0x1b, 0x45, data];
   }
 
   /**
-     * Enable or disable underline text
-     * @param {boolean} value   Enable or disable underline text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable underline text
+   * @param {boolean} value   Enable or disable underline text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   underline(value) {
     let data = 0x00;
 
-    if (value) {
+    if (value === 2) {
+      data = 0x02;
+    } else if (value) {
       data = 0x01;
     }
 
-    return [
-      0x1b, 0x2d, data,
-    ];
+    return [0x1b, 0x2d, data];
   }
 
   /**
-     * Enable or disable italic text
-     * @param {boolean} value   Enable or disable italic text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable italic text
+   * @param {boolean} value   Enable or disable italic text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   italic(value) {
     let data = 0x00;
 
@@ -1568,16 +1728,14 @@ class LanguageEscPos {
       data = 0x01;
     }
 
-    return [
-      0x1b, 0x34, data,
-    ];
+    return [0x1b, 0x34, data];
   }
 
   /**
-     * Enable or disable inverted text
-     * @param {boolean} value   Enable or disable inverted text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable inverted text
+   * @param {boolean} value   Enable or disable inverted text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   invert(value) {
     let data = 0x00;
 
@@ -1585,38 +1743,32 @@ class LanguageEscPos {
       data = 0x01;
     }
 
-    return [
-      0x1d, 0x42, data,
-    ];
+    return [0x1d, 0x42, data];
   }
 
   /**
-     * Change text size
-     * @param {number} width    Width of the text (1-8)
-     * @param {number} height   Height of the text (1-8)
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change text size
+   * @param {number} width    Width of the text (1-8)
+   * @param {number} height   Height of the text (1-8)
+   * @return {Array}         Array of bytes to send to the printer
+   */
   size(width, height) {
-    return [
-      0x1d, 0x21, (height - 1) | (width - 1) << 4,
-    ];
+    return [0x1d, 0x21, ((height - 1) & 0x0f) | (((width - 1) & 0x0f) << 4)];
   }
 
   /**
-     * Change the codepage
-     * @param {number} value    Codepage value
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change the codepage
+   * @param {number} value    Codepage value
+   * @return {Array}         Array of bytes to send to the printer
+   */
   codepage(value) {
-    return [
-      0x1b, 0x74, value,
-    ];
+    return [0x1b, 0x74, value];
   }
 
   /**
-     * Flush the printers line buffer
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Flush the printers line buffer
+   * @return {Array}         Array of bytes to send to the printer
+   */
   flush() {
     return [];
   }
@@ -1627,37 +1779,37 @@ class LanguageEscPos {
  */
 class LanguageStarPrnt {
   /**
-     * Initialize the printer
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Initialize the printer
+   * @return {Array}         Array of bytes to send to the printer
+   */
   initialize() {
     return [
       {
-        type: 'initialize',
+        type: "initialize",
         payload: [0x1b, 0x40, 0x18],
       },
     ];
   }
 
   /**
-     * Change the font
-     * @param {string} value     Font type ('A', 'B' or 'C')
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change the font
+   * @param {string} value     Font type ('A', 'B' or 'C')
+   * @return {Array}         Array of bytes to send to the printer
+   */
   font(value) {
     let type = 0x00;
 
-    if (value === 'B') {
+    if (value === "B") {
       type = 0x01;
     }
 
-    if (value === 'C') {
+    if (value === "C") {
       type = 0x02;
     }
 
     return [
       {
-        type: 'font',
+        type: "font",
         value,
         payload: [0x1b, 0x1e, 0x46, type],
       },
@@ -1665,22 +1817,22 @@ class LanguageStarPrnt {
   }
 
   /**
-     * Change the alignment
-     * @param {string} value    Alignment value ('left', 'center', 'right')
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change the alignment
+   * @param {string} value    Alignment value ('left', 'center', 'right')
+   * @return {Array}         Array of bytes to send to the printer
+   */
   align(value) {
     let align = 0x00;
 
-    if (value === 'center') {
+    if (value === "center") {
       align = 0x01;
-    } else if (value === 'right') {
+    } else if (value === "right") {
       align = 0x02;
     }
 
     return [
       {
-        type: 'align',
+        type: "align",
         value,
         payload: [0x1b, 0x1d, 0x61, align],
       },
@@ -1688,78 +1840,88 @@ class LanguageStarPrnt {
   }
 
   /**
-     * Generate a barcode
-     * @param {string} value        Value to encode
-     * @param {string|number} symbology    Barcode symbology
-     * @param {object} options      Configuration object
-     * @return {Array}             Array of bytes to send to the printer
-     */
+   * Generate a barcode
+   * @param {string} value        Value to encode
+   * @param {string|number} symbology    Barcode symbology
+   * @param {object} options      Configuration object
+   * @return {Array}             Array of bytes to send to the printer
+   */
   barcode(value, symbology, options) {
     const result = [];
 
     const symbologies = {
-      'upce': 0x00,
-      'upca': 0x01,
-      'ean8': 0x02,
-      'ean13': 0x03,
-      'code39': 0x04,
-      'itf': 0x05,
-      'interleaved-2-of-5': 0x05,
-      'code128': 0x06,
-      'code93': 0x07,
-      'nw-7': 0x08,
-      'codabar': 0x08,
-      'gs1-128': 0x09,
-      'gs1-databar-omni': 0x0a,
-      'gs1-databar-truncated': 0x0b,
-      'gs1-databar-limited': 0x0c,
-      'gs1-databar-expanded': 0x0d,
+      upce: 0x00,
+      upca: 0x01,
+      ean8: 0x02,
+      ean13: 0x03,
+      code39: 0x04,
+      itf: 0x05,
+      "interleaved-2-of-5": 0x05,
+      code128: 0x06,
+      code93: 0x07,
+      "nw-7": 0x08,
+      codabar: 0x08,
+      "gs1-128": 0x09,
+      "gs1-databar-omni": 0x0a,
+      "gs1-databar-truncated": 0x0b,
+      "gs1-databar-limited": 0x0c,
+      "gs1-databar-expanded": 0x0d,
     };
 
-    if (typeof symbology === 'string' && typeof symbologies[symbology] === 'undefined') {
+    if (
+      typeof symbology === "string" &&
+      typeof symbologies[symbology] === "undefined"
+    ) {
       throw new Error(`Symbology '${symbology}' not supported by language`);
     }
 
     if (options.width < 1 || options.width > 3) {
-      throw new Error('Width must be between 1 and 3');
+      throw new Error("Width must be between 1 and 3");
     }
 
     /* Selecting mode A, B or C for Code128 is not supported for StarPRNT, so ignore it and let the printer choose */
 
-    if (symbology === 'code128' && value.startsWith('{')) {
+    if (symbology === "code128" && value.startsWith("{")) {
       value = value.slice(2);
     }
 
     /* Encode the barcode value */
 
-    const bytes = CodepageEncoder.encode(value, 'ascii');
+    const bytes = CodepageEncoder.encode(value, "ascii");
 
-    const identifier = typeof symbology === 'string' ? symbologies[symbology] : symbology;
+    const identifier =
+      typeof symbology === "string" ? symbologies[symbology] : symbology;
 
-    result.push(
-      {
-        type: 'barcode',
-        value: { symbology: symbology, data: value, width: options.width, height: options.height, text: options.text },
-        payload: [
-          0x1b, 0x62,
-          identifier,
-          options.text ? 0x02 : 0x01,
-          options.width,
-          options.height,
-          ...bytes, 0x1e,
-        ],
+    result.push({
+      type: "barcode",
+      value: {
+        symbology: symbology,
+        data: value,
+        width: options.width,
+        height: options.height,
+        text: options.text,
       },
-    );
+      payload: [
+        0x1b,
+        0x62,
+        identifier,
+        options.text ? 0x02 : 0x01,
+        options.width,
+        options.height,
+        ...bytes,
+        0x1e,
+      ],
+    });
 
     return result;
   }
 
   /**
-     * Generate a QR code
-     * @param {string} value        Value to encode
-     * @param {object} options      Configuration object
-     * @return {Array}             Array of bytes to send to the printer
-     */
+   * Generate a QR code
+   * @param {string} value        Value to encode
+   * @param {object} options      Configuration object
+   * @return {Array}             Array of bytes to send to the printer
+   */
   qrcode(value, options) {
     const result = [];
 
@@ -1771,223 +1933,236 @@ class LanguageStarPrnt {
     };
 
     if (options.model in models) {
-      result.push(
-        {
-          type: 'qrcode',
-          property: 'model',
-          value: options.model,
-          payload: [0x1b, 0x1d, 0x79, 0x53, 0x30, models[options.model]],
-        },
-      );
+      result.push({
+        type: "qrcode",
+        property: "model",
+        value: options.model,
+        payload: [0x1b, 0x1d, 0x79, 0x53, 0x30, models[options.model]],
+      });
     } else {
-      throw new Error('Model must be 1 or 2');
+      throw new Error("Model must be 1 or 2");
     }
 
     /* Size */
 
-    if (typeof options.size !== 'number') {
-      throw new Error('Size must be a number');
+    if (typeof options.size !== "number") {
+      throw new Error("Size must be a number");
     }
 
     if (options.size < 1 || options.size > 8) {
-      throw new Error('Size must be between 1 and 8');
+      throw new Error("Size must be between 1 and 8");
     }
 
-    result.push(
-      {
-        type: 'qrcode',
-        property: 'size',
-        value: options.size,
-        payload: [0x1b, 0x1d, 0x79, 0x53, 0x32, options.size],
-      },
-    );
+    result.push({
+      type: "qrcode",
+      property: "size",
+      value: options.size,
+      payload: [0x1b, 0x1d, 0x79, 0x53, 0x32, options.size],
+    });
 
     /* Error level */
 
     const errorlevels = {
-      'l': 0x00,
-      'm': 0x01,
-      'q': 0x02,
-      'h': 0x03,
+      l: 0x00,
+      m: 0x01,
+      q: 0x02,
+      h: 0x03,
     };
 
     if (options.errorlevel in errorlevels) {
-      result.push(
-        {
-          type: 'qrcode',
-          property: 'errorlevel',
-          value: options.errorlevel,
-          payload: [0x1b, 0x1d, 0x79, 0x53, 0x31, errorlevels[options.errorlevel]],
-        },
-      );
+      result.push({
+        type: "qrcode",
+        property: "errorlevel",
+        value: options.errorlevel,
+        payload: [
+          0x1b,
+          0x1d,
+          0x79,
+          0x53,
+          0x31,
+          errorlevels[options.errorlevel],
+        ],
+      });
     } else {
-      throw new Error('Error level must be l, m, q or h');
+      throw new Error("Error level must be l, m, q or h");
     }
 
     /* Data */
 
-    const bytes = CodepageEncoder.encode(value, 'iso8859-1');
+    const bytes = CodepageEncoder.encode(value, "iso8859-1");
     const length = bytes.length;
 
-    result.push(
-      {
-        type: 'qrcode',
-        property: 'data',
-        value,
-        payload: [
-          0x1b, 0x1d, 0x79, 0x44, 0x31, 0x00,
-          length & 0xff, (length >> 8) & 0xff,
-          ...bytes,
-        ],
-      },
-    );
+    result.push({
+      type: "qrcode",
+      property: "data",
+      value,
+      payload: [
+        0x1b,
+        0x1d,
+        0x79,
+        0x44,
+        0x31,
+        0x00,
+        length & 0xff,
+        (length >> 8) & 0xff,
+        ...bytes,
+      ],
+    });
 
     /* Print QR code */
 
-    result.push(
-      {
-        type: 'qrcode',
-        command: 'print',
-        payload: [0x1b, 0x1d, 0x79, 0x50],
-      },
-    );
+    result.push({
+      type: "qrcode",
+      command: "print",
+      payload: [0x1b, 0x1d, 0x79, 0x50],
+    });
 
     return result;
   }
 
   /**
-     * Generate a PDF417 code
-     * @param {string} value        Value to encode
-     * @param {object} options      Configuration object
-     * @return {Array}             Array of bytes to send to the printer
-     */
+   * Generate a PDF417 code
+   * @param {string} value        Value to encode
+   * @param {object} options      Configuration object
+   * @return {Array}             Array of bytes to send to the printer
+   */
   pdf417(value, options) {
     const result = [];
 
     /* Columns and Rows */
 
-    if (typeof options.columns !== 'number') {
-      throw new Error('Columns must be a number');
+    if (typeof options.columns !== "number") {
+      throw new Error("Columns must be a number");
     }
 
-    if (options.columns !== 0 && (options.columns < 1 || options.columns > 30)) {
-      throw new Error('Columns must be 0, or between 1 and 30');
+    if (
+      options.columns !== 0 &&
+      (options.columns < 1 || options.columns > 30)
+    ) {
+      throw new Error("Columns must be 0, or between 1 and 30");
     }
 
-    if (typeof options.rows !== 'number') {
-      throw new Error('Rows must be a number');
+    if (typeof options.rows !== "number") {
+      throw new Error("Rows must be a number");
     }
 
     if (options.rows !== 0 && (options.rows < 3 || options.rows > 90)) {
-      throw new Error('Rows must be 0, or between 3 and 90');
+      throw new Error("Rows must be 0, or between 3 and 90");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        value: `rows: ${options.rows}, columns: ${options.columns}`,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x30, 0x01, options.rows, options.columns],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      value: `rows: ${options.rows}, columns: ${options.columns}`,
+      payload: [
+        0x1b,
+        0x1d,
+        0x78,
+        0x53,
+        0x30,
+        0x01,
+        options.rows,
+        options.columns,
+      ],
+    });
 
     /* Width */
 
-    if (typeof options.width !== 'number') {
-      throw new Error('Width must be a number');
+    if (typeof options.width !== "number") {
+      throw new Error("Width must be a number");
     }
 
     if (options.width < 2 || options.width > 8) {
-      throw new Error('Width must be between 2 and 8');
+      throw new Error("Width must be between 2 and 8");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'width',
-        value: options.width,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x32, options.width],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "width",
+      value: options.width,
+      payload: [0x1b, 0x1d, 0x78, 0x53, 0x32, options.width],
+    });
 
     /* Height */
 
-    if (typeof options.height !== 'number') {
-      throw new Error('Height must be a number');
+    if (typeof options.height !== "number") {
+      throw new Error("Height must be a number");
     }
 
     if (options.height < 2 || options.height > 8) {
-      throw new Error('Height must be between 2 and 8');
+      throw new Error("Height must be between 2 and 8");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'height',
-        value: options.height,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x33, options.height],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "height",
+      value: options.height,
+      payload: [0x1b, 0x1d, 0x78, 0x53, 0x33, options.height],
+    });
 
     /* Error level */
 
-    if (typeof options.errorlevel !== 'number') {
-      throw new Error('Errorlevel must be a number');
+    if (typeof options.errorlevel !== "number") {
+      throw new Error("Errorlevel must be a number");
     }
 
     if (options.errorlevel < 0 || options.errorlevel > 8) {
-      throw new Error('Errorlevel must be between 0 and 8');
+      throw new Error("Errorlevel must be between 0 and 8");
     }
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'errorlevel',
-        value: options.errorlevel,
-        payload: [0x1b, 0x1d, 0x78, 0x53, 0x31, options.errorlevel],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "errorlevel",
+      value: options.errorlevel,
+      payload: [0x1b, 0x1d, 0x78, 0x53, 0x31, options.errorlevel],
+    });
 
     /* Data */
 
-    const bytes = CodepageEncoder.encode(value, 'ascii');
+    const bytes = CodepageEncoder.encode(value, "ascii");
     const length = bytes.length;
 
-    result.push(
-      {
-        type: 'pdf417',
-        property: 'data',
-        value,
-        payload: [
-          0x1b, 0x1d, 0x78, 0x44,
-          length & 0xff, (length >> 8) & 0xff,
-          ...bytes,
-        ],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      property: "data",
+      value,
+      payload: [
+        0x1b,
+        0x1d,
+        0x78,
+        0x44,
+        length & 0xff,
+        (length >> 8) & 0xff,
+        ...bytes,
+      ],
+    });
 
     /* Print PDF417 code */
 
-    result.push(
-      {
-        type: 'pdf417',
-        command: 'print',
-        payload: [0x1b, 0x1d, 0x78, 0x50],
-      },
-    );
+    result.push({
+      type: "pdf417",
+      command: "print",
+      payload: [0x1b, 0x1d, 0x78, 0x50],
+    });
 
     return result;
   }
 
   /**
-     * Encode an image
-     * @param {ImageData} image     ImageData object
-     * @param {number} width        Width of the image
-     * @param {number} height       Height of the image
-     * @param {Object} [options]    Additional options
-     * @param {boolean} [options.supportsCompression=false] Use compression if supported (Star-specific)
-     * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
-     */
+   * Encode an image
+   * @param {ImageData} image     ImageData object
+   * @param {number} width        Width of the image
+   * @param {number} height       Height of the image
+   * @param {Object} [options]    Additional options
+   * @param {boolean} [options.supportsCompression=false] Use compression if supported (Star-specific)
+   * @return {Array|Promise}     Array of bytes to send to the printer, or Promise for async processing
+   */
   image(image, width, height, options = {}) {
+    // The main encoder passes its imageMode option here. Star printers only
+    // support column mode, so normalize and ignore any mode string.
+    if (typeof options !== "object" || options === null) {
+      options = {};
+    }
+
     // Size thresholds for async processing
     const totalPixels = width * height;
     const memoryFootprint = width * Math.ceil(height / 24) * 3;
@@ -2018,13 +2193,16 @@ class LanguageStarPrnt {
     for (const stripData of strips) {
       const command = ImageEncoder.buildStarColumnCommand(stripData, width);
       result.push({
-        type: 'image',
-        property: 'data',
-        value: 'column',
+        type: "image",
+        property: "data",
+        value: "column",
         width,
         height: 24,
         payload: command, // Keep as Uint8Array to avoid memory duplication
       });
+
+      // The strip buffer was copied into the command payload.
+      ImageEncoder.releaseBuffer(stripData);
     }
 
     return result;
@@ -2055,7 +2233,15 @@ class LanguageStarPrnt {
         for (let c = 0; c < 3; c++) {
           let byte = 0;
           for (let b = 0; b < 8; b++) {
-            byte |= ImageEncoder.getPixel(image, x, stripY + (c * 8) + b, width, height) << (7 - b);
+            byte |=
+              ImageEncoder.getPixel(
+                image,
+                x,
+                stripY + c * 8 + b,
+                width,
+                height,
+              ) <<
+              (7 - b);
           }
           strip[offset + c] = byte;
         }
@@ -2068,9 +2254,9 @@ class LanguageStarPrnt {
 
       const starCommand = ImageEncoder.buildStarColumnCommand(strip, width);
       result.push({
-        type: 'image',
-        property: 'data',
-        value: 'column',
+        type: "image",
+        property: "data",
+        value: "column",
         width,
         height: 24,
         payload: starCommand, // Keep as Uint8Array to avoid memory duplication
@@ -2081,42 +2267,42 @@ class LanguageStarPrnt {
   }
 
   /**
-     * Cut the paper
-     * @param {string} value    Cut type ('full' or 'partial')
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Cut the paper
+   * @param {string} value    Cut type ('full' or 'partial')
+   * @return {Array}         Array of bytes to send to the printer
+   */
   cut(value) {
     let data = 0x00;
 
-    if (value == 'partial') {
+    if (value == "partial") {
       data = 0x01;
     }
 
     return [
       {
-        type: 'cut',
+        type: "cut",
         payload: [0x1b, 0x64, data],
       },
     ];
   }
 
   /**
-     * Send a pulse to the cash drawer
-     * @param {number} device   Device number
-     * @param {number} on       Pulse ON time
-     * @param {number} off      Pulse OFF time
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Send a pulse to the cash drawer
+   * @param {number} device   Device number
+   * @param {number} on       Pulse ON time
+   * @param {number} off      Pulse OFF time
+   * @return {Array}         Array of bytes to send to the printer
+   */
   pulse(device, on, off) {
-    if (typeof device === 'undefined') {
+    if (typeof device === "undefined") {
       device = 0;
     }
 
-    if (typeof on === 'undefined') {
+    if (typeof on === "undefined") {
       on = 200;
     }
 
-    if (typeof off === 'undefined') {
+    if (typeof off === "undefined") {
       off = 200;
     }
 
@@ -2125,17 +2311,17 @@ class LanguageStarPrnt {
 
     return [
       {
-        type: 'pulse',
+        type: "pulse",
         payload: [0x1b, 0x07, on & 0xff, off & 0xff, device ? 0x1a : 0x07],
       },
     ];
   }
 
   /**
-     * Enable or disable bold text
-     * @param {boolean} value   Enable or disable bold text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable bold text
+   * @param {boolean} value   Enable or disable bold text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   bold(value) {
     let data = 0x46;
 
@@ -2143,42 +2329,40 @@ class LanguageStarPrnt {
       data = 0x45;
     }
 
-    return [
-      0x1b, data,
-    ];
+    return [0x1b, data];
   }
 
   /**
-     * Enable or disable underline text
-     * @param {boolean} value   Enable or disable underline text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable underline text
+   * @param {boolean} value   Enable or disable underline text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   underline(value) {
     let data = 0x00;
 
-    if (value) {
+    if (value === 2) {
+      data = 0x02;
+    } else if (value) {
       data = 0x01;
     }
 
-    return [
-      0x1b, 0x2d, data,
-    ];
+    return [0x1b, 0x2d, data];
   }
 
   /**
-     * Enable or disable italic text
-     * @param {boolean} value   Enable or disable italic text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable italic text
+   * @param {boolean} value   Enable or disable italic text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   italic(value) {
     return [];
   }
 
   /**
-     * Enable or disable inverted text
-     * @param {boolean} value   Enable or disable inverted text, optional, default toggles between states
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Enable or disable inverted text
+   * @param {boolean} value   Enable or disable inverted text, optional, default toggles between states
+   * @return {Array}         Array of bytes to send to the printer
+   */
   invert(value) {
     let data = 0x35;
 
@@ -2186,48 +2370,42 @@ class LanguageStarPrnt {
       data = 0x34;
     }
 
-    return [
-      0x1b, data,
-    ];
+    return [0x1b, data];
   }
 
   /**
-     * Change text size
-     * @param {number} width    Width of the text (1-8)
-     * @param {number} height   Height of the text (1-8)
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change text size
+   * @param {number} width    Width of the text (1-8)
+   * @param {number} height   Height of the text (1-8)
+   * @return {Array}         Array of bytes to send to the printer
+   */
   size(width, height) {
-    return [
-      0x1b, 0x69, height - 1, width - 1,
-    ];
+    return [0x1b, 0x69, height - 1, width - 1];
   }
 
   /**
-     * Change the codepage
-     * @param {number} value    Codepage value
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Change the codepage
+   * @param {number} value    Codepage value
+   * @return {Array}         Array of bytes to send to the printer
+   */
   codepage(value) {
-    return [
-      0x1b, 0x1d, 0x74, value,
-    ];
+    return [0x1b, 0x1d, 0x74, value];
   }
 
   /**
-     * Flush the printers line buffer
-     * @return {Array}         Array of bytes to send to the printer
-     */
+   * Flush the printers line buffer
+   * @return {Array}         Array of bytes to send to the printer
+   */
   flush() {
     return [
       {
-        type: 'print-mode',
-        value: 'page',
+        type: "print-mode",
+        value: "page",
         payload: [0x1b, 0x1d, 0x50, 0x30],
       },
       {
-        type: 'print-mode',
-        value: 'line',
+        type: "print-mode",
+        value: "line",
         payload: [0x1b, 0x1d, 0x50, 0x31],
       },
     ];
@@ -2813,6 +2991,28 @@ class LineComposer {
     this.#stored = restore;
     this.#buffer = [];
     this.#cursor = 0;
+
+    /* A line that contains only formatting commands (style changes,
+       alignment, font, codepage or line spacing) has nothing to print.
+       When the flush was NOT forced with a newline (e.g. the flush before a
+       QR code, around an image, or right before the cut), emitting such a
+       line would produce a blank paper feed, so drop it entirely — the next
+       content line re-applies the active style. When a newline IS forced
+       (explicit newline()/feedBeforeCut), emit an empty line so the
+       intended feed is preserved. */
+
+    const formattingTypes = ['style', 'align', 'font', 'codepage', 'line-spacing'];
+
+    const onlyFormatting =
+      result.length > 0 && result.every((item) => formattingTypes.includes(item.type));
+
+    if (onlyFormatting) {
+      if (options.forceNewline) {
+        result = [{type: 'empty'}];
+      } else {
+        result = [];
+      }
+    }
 
     if (result.length === 0 && options.forceNewline) {
       result.push({type: 'empty'});
@@ -3454,7 +3654,13 @@ class ReceiptPrinterEncoder {
 
     const matches = value.match(/^[0-9]+x[0-9]+$/);
     if (matches) {
-      value = Object.entries(this.#printerCapabilities.fonts).find((i) => i[1].size == matches[0])[0];
+      const matchingFont = Object.entries(this.#printerCapabilities.fonts).find((i) => i[1].size == matches[0]);
+
+      if (typeof matchingFont === 'undefined') {
+        return this.#error('This font size is not supported by this printer', 'relaxed');
+      }
+
+      value = matchingFont[0];
     }
 
     /* Make sure the font name is uppercase */
@@ -4124,9 +4330,17 @@ class ReceiptPrinterEncoder {
     const buffer = [];
 
     for (const fragment of fragments) {
-      this.#state.codepage = this.#codepageMapping[fragment.codepage];
+      const mappedCodepage = this.#codepageMapping[fragment.codepage];
+
+      /* Only switch the printer codepage when it actually changes */
+      if (this.#state.codepage !== mappedCodepage) {
+        this.#state.codepage = mappedCodepage;
+        buffer.push(
+          { type: 'codepage', payload: this.#language.codepage(mappedCodepage) },
+        );
+      }
+
       buffer.push(
-        { type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage]) },
         { type: 'text', payload: [...fragment.bytes] },
       );
     }
@@ -4169,7 +4383,17 @@ class ReceiptPrinterEncoder {
     const remaining = this.#composer.fetch({ forceFlush: true, ignoreAlignment: true });
 
     if (remaining.length) {
-      this.#queue.push(remaining);
+      /* Drop trailing lines that contain no printable content (only style
+         and formatting commands). They would produce a blank feed after the
+         last printed content, e.g. after a cut command. */
+
+      const hasContent = remaining.some((item) =>
+        !['align', 'style', 'font', 'codepage', 'line-spacing'].includes(item.type),
+      );
+
+      if (hasContent) {
+        this.#queue.push(remaining);
+      }
     }
 
     /* Process all lines in the queue */
@@ -4243,27 +4467,47 @@ class ReceiptPrinterEncoder {
     /* Build the array */
 
     // Calculate total size first to avoid reallocation
-    let totalSize = 0;
-    let last = null;
-    const newlineBytes = this.#options.newline === '\n\r' ? 2 : (this.#options.newline === '\n' ? 1 : 0);
+    const newlineBytes = ['\n\r', '\r\n'].includes(this.#options.newline) ? 2 : (this.#options.newline === '\n' ? 1 : 0);
 
-    for (const line of lines) {
+    // Some commands already position the paper themselves (cut, pulse, image).
+    // Appending a line feed after them produces unwanted blank paper, e.g. an
+    // extra feed after the paper has already been cut, or a blank line below
+    // an image that the printer already advanced past.
+    const terminalTypes = ['cut', 'pulse', 'image'];
+    const needsNewline = lines.map((line) => {
+      // Find the last meaningful command, ignoring formatting-only commands
+      // that do not advance the paper (alignment resets, style changes, ...).
+      let last;
       for (const item of line) {
+        if (!['align', 'style', 'font', 'codepage', 'line-spacing'].includes(item.type)) {
+          last = item;
+        }
+      }
+
+      return !last || !terminalTypes.includes(last.type);
+    });
+
+    let totalSize = 0;
+
+    for (let l = 0; l < lines.length; l++) {
+      for (const item of lines[l]) {
         if (item.payload) {
           // Handle both Array and Uint8Array payloads
           totalSize += item.payload.length;
         }
-        last = item;
       }
-      totalSize += newlineBytes;
+
+      if (needsNewline[l]) {
+        totalSize += newlineBytes;
+      }
     }
 
     // Allocate result buffer
     const result = new Uint8Array(totalSize);
     let offset = 0;
 
-    for (const line of lines) {
-      for (const item of line) {
+    for (let l = 0; l < lines.length; l++) {
+      for (const item of lines[l]) {
         if (item.payload) {
           // Handle both Array and Uint8Array payloads efficiently
           if (item.payload instanceof Uint8Array) {
@@ -4276,21 +4520,19 @@ class ReceiptPrinterEncoder {
             }
           }
         }
-        last = item;
       }
 
-      if (this.#options.newline === '\n\r') {
-        result[offset++] = 0x0a;
-        result[offset++] = 0x0d;
-      } else if (this.#options.newline === '\n') {
-        result[offset++] = 0x0a;
+      if (needsNewline[l]) {
+        if (this.#options.newline === '\n\r') {
+          result[offset++] = 0x0a;
+          result[offset++] = 0x0d;
+        } else if (this.#options.newline === '\r\n') {
+          result[offset++] = 0x0d;
+          result[offset++] = 0x0a;
+        } else if (this.#options.newline === '\n') {
+          result[offset++] = 0x0a;
+        }
       }
-    }
-
-    /* If the last command is a pulse, do not feed */
-
-    if (last && last.type === 'pulse') {
-      return result.subarray(0, offset - newlineBytes);
     }
 
     return result.subarray(0, offset);

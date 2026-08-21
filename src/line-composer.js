@@ -229,6 +229,28 @@ class LineComposer {
     this.#buffer = [];
     this.#cursor = 0;
 
+    /* A line that contains only formatting commands (style changes,
+       alignment, font, codepage or line spacing) has nothing to print.
+       When the flush was NOT forced with a newline (e.g. the flush before a
+       QR code, around an image, or right before the cut), emitting such a
+       line would produce a blank paper feed, so drop it entirely — the next
+       content line re-applies the active style. When a newline IS forced
+       (explicit newline()/feedBeforeCut), emit an empty line so the
+       intended feed is preserved. */
+
+    const formattingTypes = ['style', 'align', 'font', 'codepage', 'line-spacing'];
+
+    const onlyFormatting =
+      result.length > 0 && result.every((item) => formattingTypes.includes(item.type));
+
+    if (onlyFormatting) {
+      if (options.forceNewline) {
+        result = [{type: 'empty'}];
+      } else {
+        result = [];
+      }
+    }
+
     if (result.length === 0 && options.forceNewline) {
       result.push({type: 'empty'});
     }
