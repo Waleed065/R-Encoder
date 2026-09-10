@@ -447,7 +447,13 @@ class ReceiptPrinterEncoder {
 
     const matches = value.match(/^[0-9]+x[0-9]+$/);
     if (matches) {
-      value = Object.entries(this.#printerCapabilities.fonts).find((i) => i[1].size == matches[0])[0];
+      const matchingFont = Object.entries(this.#printerCapabilities.fonts).find((i) => i[1].size == matches[0]);
+
+      if (typeof matchingFont === 'undefined') {
+        return this.#error('This font size is not supported by this printer', 'relaxed');
+      }
+
+      value = matchingFont[0];
     }
 
     /* Make sure the font name is uppercase */
@@ -1117,9 +1123,17 @@ class ReceiptPrinterEncoder {
     const buffer = [];
 
     for (const fragment of fragments) {
-      this.#state.codepage = this.#codepageMapping[fragment.codepage];
+      const mappedCodepage = this.#codepageMapping[fragment.codepage];
+
+      /* Only switch the printer codepage when it actually changes */
+      if (this.#state.codepage !== mappedCodepage) {
+        this.#state.codepage = mappedCodepage;
+        buffer.push(
+          { type: 'codepage', payload: this.#language.codepage(mappedCodepage) },
+        );
+      }
+
       buffer.push(
-        { type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage]) },
         { type: 'text', payload: [...fragment.bytes] },
       );
     }
@@ -1162,7 +1176,17 @@ class ReceiptPrinterEncoder {
     const remaining = this.#composer.fetch({ forceFlush: true, ignoreAlignment: true });
 
     if (remaining.length) {
-      this.#queue.push(remaining);
+      /* Drop trailing lines that contain no printable content (only style
+         and formatting commands). They would produce a blank feed after the
+         last printed content, e.g. after a cut command. */
+
+      const hasContent = remaining.some((item) =>
+        !['align', 'style', 'font', 'codepage', 'line-spacing'].includes(item.type),
+      );
+
+      if (hasContent) {
+        this.#queue.push(remaining);
+      }
     }
 
     /* Process all lines in the queue */
@@ -1236,27 +1260,47 @@ class ReceiptPrinterEncoder {
     /* Build the array */
 
     // Calculate total size first to avoid reallocation
-    let totalSize = 0;
-    let last = null;
-    const newlineBytes = this.#options.newline === '\n\r' ? 2 : (this.#options.newline === '\n' ? 1 : 0);
+    const newlineBytes = ['\n\r', '\r\n'].includes(this.#options.newline) ? 2 : (this.#options.newline === '\n' ? 1 : 0);
 
-    for (const line of lines) {
+    // Some commands already position the paper themselves (cut, pulse, image).
+    // Appending a line feed after them produces unwanted blank paper, e.g. an
+    // extra feed after the paper has already been cut, or a blank line below
+    // an image that the printer already advanced past.
+    const terminalTypes = ['cut', 'pulse', 'image'];
+    const needsNewline = lines.map((line) => {
+      // Find the last meaningful command, ignoring formatting-only commands
+      // that do not advance the paper (alignment resets, style changes, ...).
+      let last;
       for (const item of line) {
+        if (!['align', 'style', 'font', 'codepage', 'line-spacing'].includes(item.type)) {
+          last = item;
+        }
+      }
+
+      return !last || !terminalTypes.includes(last.type);
+    });
+
+    let totalSize = 0;
+
+    for (let l = 0; l < lines.length; l++) {
+      for (const item of lines[l]) {
         if (item.payload) {
           // Handle both Array and Uint8Array payloads
           totalSize += item.payload.length;
         }
-        last = item;
       }
-      totalSize += newlineBytes;
+
+      if (needsNewline[l]) {
+        totalSize += newlineBytes;
+      }
     }
 
     // Allocate result buffer
     const result = new Uint8Array(totalSize);
     let offset = 0;
 
-    for (const line of lines) {
-      for (const item of line) {
+    for (let l = 0; l < lines.length; l++) {
+      for (const item of lines[l]) {
         if (item.payload) {
           // Handle both Array and Uint8Array payloads efficiently
           if (item.payload instanceof Uint8Array) {
@@ -1269,21 +1313,19 @@ class ReceiptPrinterEncoder {
             }
           }
         }
-        last = item;
       }
 
-      if (this.#options.newline === '\n\r') {
-        result[offset++] = 0x0a;
-        result[offset++] = 0x0d;
-      } else if (this.#options.newline === '\n') {
-        result[offset++] = 0x0a;
+      if (needsNewline[l]) {
+        if (this.#options.newline === '\n\r') {
+          result[offset++] = 0x0a;
+          result[offset++] = 0x0d;
+        } else if (this.#options.newline === '\r\n') {
+          result[offset++] = 0x0d;
+          result[offset++] = 0x0a;
+        } else if (this.#options.newline === '\n') {
+          result[offset++] = 0x0a;
+        }
       }
-    }
-
-    /* If the last command is a pulse, do not feed */
-
-    if (last && last.type === 'pulse') {
-      return result.subarray(0, offset - newlineBytes);
     }
 
     return result.subarray(0, offset);

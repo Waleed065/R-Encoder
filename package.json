@@ -19,7 +19,8 @@
   "scripts": {
     "build": "npm run generate && rollup -c",
     "generate": "node tools/generate.js",
-    "lint": "eslint --fix src/*.js src/**/*.js"
+    "lint": "eslint --fix src/*.js src/**/*.js",
+    "test": "node --test"
   },
   "repository": {
     "type": "git",

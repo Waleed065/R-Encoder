@@ -1,6 +1,6 @@
 # Receipt Printer Encoder
 
-Version: 1.0.2
+Version: 3.0.4
 
 Enterprise-grade library for generating ESC/POS, StarLine, and StarPRNT command streams for thermal receipt printers. Features memory-efficient image processing, RLE compression, and streaming transmission for large payloads.
 
@@ -9,7 +9,7 @@ Enterprise-grade library for generating ESC/POS, StarLine, and StarPRNT command 
 - ✅ **Multi-protocol support**: ESC/POS, StarLine, StarPRNT
 - ✅ **33 built-in printer definitions** with automatic capability detection
 - ✅ **Memory-efficient image processing** - no stack overflow on large images
-- ✅ **Strip-based raster encoding** - automatically splits large images into 256px-height strips to prevent memory overflow
+- ✅ **Strip-based raster encoding** - automatically splits large images into 512px-height strips to prevent memory overflow
 - ✅ **RLE compression** for supported printers (40-98% size reduction)
 - ✅ **Streaming transmission** with backpressure support
 - ✅ **TypeScript definitions** included
@@ -97,7 +97,7 @@ async function printNormalReceipt(printerService) {
         ["Orange Juice", "2", "$6.00"],
         ["Sandwich", "1", "$7.50"],
         ["--------------------------------", "", ""],
-      ]
+      ],
     )
 
     // Totals
@@ -111,7 +111,7 @@ async function printNormalReceipt(printerService) {
         ["Subtotal:", "$25.25"],
         ["Tax (8%):", "$2.02"],
         ["", "--------"],
-      ]
+      ],
     )
     .bold(true)
     .table(
@@ -119,7 +119,7 @@ async function printNormalReceipt(printerService) {
         { width: 22, align: "left" },
         { width: 16, align: "right" },
       ],
-      [["TOTAL:", "$27.27"]]
+      [["TOTAL:", "$27.27"]],
     )
     .bold(false)
     .newline()
@@ -159,20 +159,19 @@ For receipts that need custom fonts, complex layouts, or graphics, render the en
 
 **Technical: Strip-Based Raster Encoding**
 
-Large raster images are automatically split into 256-pixel-height strips to prevent memory overflow. Each strip generates a separate ESC/POS GS v 0 command, which the printer concatenates seamlessly as continuous output. This architecture prevents single large buffer allocations while maintaining print quality.
+Large raster images are automatically split into 512-pixel-height strips to prevent memory overflow. Each strip generates a separate ESC/POS GS v 0 command, which the printer concatenates seamlessly as continuous output. This architecture prevents single large buffer allocations while maintaining print quality.
 
 **Binary GS v 0 Command Structure:**
 
 - `0x1D 0x76 0x30` - GS v 0 command header
 - `m` (1 byte) - Mode (0x00 = uncompressed, 0x01 = RLE compressed)
 - `xL xH` (2 bytes) - Width in bytes (little-endian), each strip uses same width as full image
-- `yL yH` (2 bytes) - Height in pixels (little-endian), typically 256 for all strips except last
+- `yL yH` (2 bytes) - Height in pixels (little-endian), typically 512 for all strips except last
 - `[raster data]` - 1-bit monochrome bitmap (MSB first, row-major)
 
 **Example for 500px tall × 576px wide image:**
 
-- Strip 1: 256 rows → GS v 0 header + width (72 bytes) + height (256) + 18,432 bytes raster data
-- Strip 2: 244 rows → GS v 0 header + width (72 bytes) + height (244) + 17,568 bytes raster data
+- Strip 1: 500 rows → GS v 0 header + width (72 bytes) + height (500) + 36,000 bytes raster data
 - Memory pool: 4MB max, prevents allocation failures
 
 ```javascript
@@ -181,7 +180,7 @@ import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 /**
  * Print a full raster receipt (entire receipt is an image)
  * Useful for custom fonts, complex layouts, or branded designs
- * Automatically handles large images via strip-based encoding (256px height default)
+ * Automatically handles large images via strip-based encoding (512px height default)
  */
 async function printRasterReceipt(printerService, receiptImageData) {
   const encoder = new ReceiptPrinterEncoder({
@@ -192,7 +191,7 @@ async function printRasterReceipt(printerService, receiptImageData) {
   // receiptImageData should be an ImageData object with:
   // - data: Uint8ClampedArray (RGBA pixels)
   // - width: number (must be multiple of 8, typically 384 or 576)
-  // - height: number (can be unlimited; library auto-splits into 256px strips)
+  // - height: number (can be unlimited; library auto-splits into 512px strips)
 
   encoder.initialize();
 
@@ -200,7 +199,7 @@ async function printRasterReceipt(printerService, receiptImageData) {
   await encoder.image(
     receiptImageData,
     receiptImageData.width,
-    receiptImageData.height
+    receiptImageData.height,
   );
 
   encoder.newline().cut();
@@ -238,7 +237,7 @@ async function createReceiptImage(htmlContent) {
 | 80mm        | 203 | 576px       | Unlimited  |
 | 80mm        | 180 | 512px       | Unlimited  |
 
-**Height is unlimited**: Images are automatically split into 256-pixel-height strips. For example, a 2000px tall image is divided into 8 strips (7 × 256px + 1 × 48px). The library maintains a 4MB memory pool per strip to prevent allocation failures. Memory-efficient processing prevents main thread blocking during large image encoding.
+**Height is unlimited**: Images are automatically split into 512-pixel-height strips. For example, a 2000px tall image is divided into 4 strips (3 × 512px + 1 × 464px). The library maintains a 4MB memory pool per strip to prevent allocation failures. Memory-efficient processing prevents main thread blocking during large image encoding.
 
 ---
 
@@ -298,7 +297,7 @@ async function printWithSignature(printerService, signatureImageData) {
   await encoder.image(
     signatureImageData,
     signatureImageData.width,
-    signatureImageData.height
+    signatureImageData.height,
   );
 
   encoder
@@ -319,7 +318,7 @@ async function printWithSignature(printerService, signatureImageData) {
 
 For large images or full raster receipts, use streaming to prevent printer buffer overflow. **Technical: Strip-Level Backpressure**
 
-Images are processed using strip-based encoding: each 256-pixel-height strip generates a separate GS v 0 command. Backpressure control operates at the **strip level**, not the monolithic image level. The encoder yields control after every 4 strips to prevent UI blocking. Memory pool (4MB max) ensures consistent performance regardless of image height.
+Images are processed using strip-based encoding: each 512-pixel-height strip generates a separate GS v 0 command. Backpressure control operates at the **strip level**, not the monolithic image level. The encoder yields control after every strip to prevent UI blocking. Memory pool (4MB max) ensures consistent performance regardless of image height.
 
 ```javascript
 import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
@@ -327,7 +326,7 @@ import ReceiptPrinterEncoder from "@point-of-sale/receipt-printer-encoder";
 /**
  * Print large image with streaming and backpressure control
  * This prevents printer buffer overflow and app crashes
- * Backpressure operates at 256px strip boundaries
+ * Backpressure operates at 512px strip boundaries
  */
 async function printLargeImage(printerService, largeImageData) {
   const encoder = new ReceiptPrinterEncoder({
@@ -338,12 +337,12 @@ async function printLargeImage(printerService, largeImageData) {
   encoder.initialize();
 
   // Add the large image - processed memory-efficiently via strip-based encoding
-  // For example, a 2000px tall image becomes 8 strips (7×256px + 1×48px)
+  // For example, a 2000px tall image becomes 4 strips (3×512px + 1×464px)
   // Each strip generates a separate GS v 0 command
   await encoder.image(
     largeImageData,
     largeImageData.width,
-    largeImageData.height
+    largeImageData.height,
   );
 
   encoder.cut();
@@ -358,8 +357,8 @@ async function printLargeImage(printerService, largeImageData) {
     onChunkSent: async (info) => {
       console.log(
         `Progress: ${info.index + 1}/${info.total} chunks (${Math.round(
-          (info.bytesSent / info.totalBytes) * 100
-        )}%)`
+          (info.bytesSent / info.totalBytes) * 100,
+        )}%)`,
       );
 
       // Track which strip we're in (each strip ≈ 18-20KB for 576px width)
@@ -382,7 +381,7 @@ async function printLargeImage(printerService, largeImageData) {
   }
 
   console.log(
-    `Print complete: ${totalBytesSent} bytes sent across ${stripCount} strips`
+    `Print complete: ${totalBytesSent} bytes sent across ${stripCount} strips`,
   );
 }
 
@@ -394,7 +393,7 @@ function delay(ms) {
 /**
  * Complete working example showing internals:
  * - Image encoding with strip-based architecture
- * - Async/await with yield control after every 4 strips
+ * - Async/await with yield control after every strip
  * - Memory pool management (4MB max per strip)
  */
 async function printWithStripTracking(printerService, imageData) {
@@ -406,21 +405,18 @@ async function printWithStripTracking(printerService, imageData) {
   encoder.initialize();
 
   // Image 1000px tall × 576px wide example:
-  // - Strip count: Math.ceil(1000 / 256) = 4 strips
+  // - Strip count: Math.ceil(1000 / 512) = 2 strips
   // - Each strip width: 576 / 8 = 72 bytes
-  // - Strip 1-3: 256 rows × 72 bytes = 18,432 bytes each
-  // - Strip 4: 232 rows × 72 bytes = 16,704 bytes
-  // - Total: ~73,572 bytes (easily fits in 4MB pool)
+  // - Strip 1: 512 rows × 72 bytes = 36,864 bytes
+  // - Strip 2: 488 rows × 72 bytes = 35,136 bytes
+  // - Total: ~72,000 bytes (easily fits in 4MB pool)
   //
   // GS v 0 command per strip:
-  // [0x1D 0x76 0x30] [mode:1] [xL:72 xH:0] [yL:256 yH:0] [18432 bytes raster data]
+  // [0x1D 0x76 0x30] [mode:1] [xL:72 xH:0] [yL:512 yH:0] [36864 bytes raster data]
   //
-  // Async execution: yield after strip 0, 4 (if exists)
+  // Async execution: yield after every strip
   // - Strip 0 processed: await new Promise(resolve => setTimeout(resolve, 0));
-  // - Strip 1 processed: no yield (i=1, 1%4=1)
-  // - Strip 2 processed: no yield (i=2, 2%4=2)
-  // - Strip 3 processed: no yield (i=3, 3%4=3)
-  // - Strip 4 processed: yield (i=4, 4%4=0 && i>0)
+  // - Strip 1 processed: yield
 
   console.log("Encoding image with strip-based architecture...");
   const startTime = Date.now();
@@ -456,7 +452,7 @@ async function printLargeImage(printerService, largeImageData) {
   await encoder.image(
     largeImageData,
     largeImageData.width,
-    largeImageData.height
+    largeImageData.height,
   );
 
   encoder.cut();
@@ -470,8 +466,8 @@ async function printLargeImage(printerService, largeImageData) {
     onChunkSent: async (info) => {
       console.log(
         `Progress: ${info.index + 1}/${info.total} chunks (${Math.round(
-          (info.bytesSent / info.totalBytes) * 100
-        )}%)`
+          (info.bytesSent / info.totalBytes) * 100,
+        )}%)`,
       );
 
       // Optional: Add delay between chunks to prevent buffer overflow
@@ -504,7 +500,7 @@ function delay(ms) {
 async function printLargeImageWithRetry(
   printerService,
   imageData,
-  options = {}
+  options = {},
 ) {
   const {
     maxRetries = 3,
@@ -542,12 +538,12 @@ async function printLargeImageWithRetry(
       } catch (error) {
         retries++;
         console.warn(
-          `Chunk ${currentChunkIndex} failed, retry ${retries}/${maxRetries}`
+          `Chunk ${currentChunkIndex} failed, retry ${retries}/${maxRetries}`,
         );
 
         if (retries >= maxRetries) {
           throw new Error(
-            `Failed to send chunk ${currentChunkIndex} after ${maxRetries} retries: ${error.message}`
+            `Failed to send chunk ${currentChunkIndex} after ${maxRetries} retries: ${error.message}`,
           );
         }
 
@@ -589,7 +585,7 @@ class TcpPrinterService {
         () => {
           console.log(`Connected to printer at ${this.host}:${this.port}`);
           resolve();
-        }
+        },
       );
 
       this.socket.on("error", (error) => {
@@ -805,7 +801,7 @@ async function printLargeReceipt(imageData) {
       chunkDelay: 10,
       onProgress: (percent, info) => {
         console.log(
-          `Printing: ${percent}% (chunk ${info.index + 1}/${info.total})`
+          `Printing: ${percent}% (chunk ${info.index + 1}/${info.total})`,
         );
         // Update your UI progress bar here
       },
