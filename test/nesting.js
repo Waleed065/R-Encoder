@@ -1,5 +1,5 @@
 import ReceiptPrinterEncoder from '../src/receipt-printer-encoder.js';
-import { assert } from 'chai';
+import { assert, expect } from 'chai';
 
 /* Boxes and tables nest in every combination. A box with a border prints
    without line spacing and its contents inherit that, so a bordered box inside
@@ -27,6 +27,8 @@ describe('Nesting boxes and tables', function() {
     const BOTTOM_LEFT = 0xc0;
     const BOTTOM_RIGHT = 0xd9;
     const VERTICAL = 0xb3;
+    const TOP = 0xc2;
+    const BOTTOM = 0xc1;
 
     describe('a bordered box inside a bordered box', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
@@ -190,6 +192,121 @@ describe('Nesting boxes and tables', function() {
                 VERTICAL, ...text('z'), ...spaces(9), VERTICAL, ...spaces(12), ...NL,
                 BOTTOM_LEFT, ...line(10), BOTTOM_RIGHT, ...spaces(12), ...SPACING_DEFAULT, ...NL,
             ]), result);
+        });
+    });
+
+    describe('a plain table inside a cell of a plain table', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
+        let result = encoder
+            .table([ { width: 16 }, { width: 16 } ], [ [
+                (cell) => cell.table([ { width: 8 }, { width: 8, align: 'right' } ], [ [ 'a', 'b' ] ]),
+                'x',
+            ] ])
+            .encode();
+
+        it('should print the inner table inside the width of the cell', function () {
+            assert.deepEqual(new Uint8Array([
+                ...CODEPAGE, ...text('a'), ...spaces(14), ...text('b'), ...text('x'), ...spaces(15), ...NL,
+            ]), result);
+        });
+    });
+
+    describe('a bordered table inside a cell of a bordered table', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
+        let result = encoder
+            .table([ { width: 14 }, { width: 14 } ], [ [
+                (cell) => cell.table([ { width: 5 }, { width: 5 } ], [ [ 'a', 'b' ] ], { border: 'single' }),
+                'x',
+            ] ], { border: 'single' })
+            .encode();
+
+        it('should set the line spacing once at the start of the outer table and once at its end', function () {
+            assert.deepEqual(new Uint8Array([
+                ...SPACING_NONE, ...CODEPAGE, TOP_LEFT, ...line(14), TOP, ...line(14), TOP_RIGHT, ...NL,
+                VERTICAL, TOP_LEFT, ...line(5), TOP, ...line(5), TOP_RIGHT, ...spaces(1),
+                VERTICAL, ...text('x'), ...spaces(13), VERTICAL, ...NL,
+                VERTICAL, VERTICAL, ...text('a'), ...spaces(4), VERTICAL, ...text('b'), ...spaces(4), VERTICAL,
+                ...spaces(1), VERTICAL, ...spaces(14), VERTICAL, ...NL,
+                VERTICAL, BOTTOM_LEFT, ...line(5), BOTTOM, ...line(5), BOTTOM_RIGHT, ...spaces(1),
+                VERTICAL, ...spaces(14), VERTICAL, ...NL,
+                BOTTOM_LEFT, ...line(14), BOTTOM, ...line(14), BOTTOM_RIGHT, ...SPACING_DEFAULT, ...NL,
+            ]), result);
+        });
+    });
+
+    describe('a bordered table inside a bordered box', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
+        let result = encoder
+            .box({ width: 20, border: 'single' }, (box) => box.table(
+                [ { width: 8 }, { width: 7 } ],
+                [ [ 'a', 'b' ] ],
+                { border: 'single' },
+            ))
+            .encode();
+
+        it('should print the table between the vertical lines of the box', function () {
+            assert.deepEqual(new Uint8Array([
+                ...SPACING_NONE, ...CODEPAGE, TOP_LEFT, ...line(18), TOP_RIGHT, ...NL,
+                VERTICAL, TOP_LEFT, ...line(8), TOP, ...line(7), TOP_RIGHT, VERTICAL, ...NL,
+                VERTICAL, VERTICAL, ...text('a'), ...spaces(7), VERTICAL, ...text('b'), ...spaces(6),
+                VERTICAL, VERTICAL, ...NL,
+                VERTICAL, BOTTOM_LEFT, ...line(8), BOTTOM, ...line(7), BOTTOM_RIGHT, VERTICAL, ...NL,
+                BOTTOM_LEFT, ...line(18), BOTTOM_RIGHT, ...SPACING_DEFAULT, ...NL,
+            ]), result);
+        });
+    });
+
+    describe('a bordered box inside a cell of a bordered table', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
+        let result = encoder
+            .table([ { width: 14 }, { width: 14 } ], [ [
+                (cell) => cell.box({ width: 10, border: 'single' }, 'z'),
+                'q',
+            ] ], { border: 'single' })
+            .encode();
+
+        it('should print the box inside the cell without touching the line spacing itself', function () {
+            assert.deepEqual(new Uint8Array([
+                ...SPACING_NONE, ...CODEPAGE, TOP_LEFT, ...line(14), TOP, ...line(14), TOP_RIGHT, ...NL,
+                VERTICAL, TOP_LEFT, ...line(8), TOP_RIGHT, ...spaces(4),
+                VERTICAL, ...text('q'), ...spaces(13), VERTICAL, ...NL,
+                VERTICAL, VERTICAL, ...text('z'), ...spaces(7), VERTICAL, ...spaces(4),
+                VERTICAL, ...spaces(14), VERTICAL, ...NL,
+                VERTICAL, BOTTOM_LEFT, ...line(8), BOTTOM_RIGHT, ...spaces(4),
+                VERTICAL, ...spaces(14), VERTICAL, ...NL,
+                BOTTOM_LEFT, ...line(14), BOTTOM, ...line(14), BOTTOM_RIGHT, ...SPACING_DEFAULT, ...NL,
+            ]), result);
+        });
+    });
+
+    describe('a nested table with a width of its own', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
+        let result = encoder
+            .table([ { width: 14 }, { width: 14 } ], [ [
+                (cell) => cell.table([ {} ], [ [ 'a' ] ], { border: 'single', width: 8 }),
+                'x',
+            ] ], { border: 'single' })
+            .encode();
+
+        it('should resolve the width against the cell, not against the paper', function () {
+            assert.deepEqual(new Uint8Array([
+                ...SPACING_NONE, ...CODEPAGE, TOP_LEFT, ...line(14), TOP, ...line(14), TOP_RIGHT, ...NL,
+                VERTICAL, TOP_LEFT, ...line(6), TOP_RIGHT, ...spaces(6),
+                VERTICAL, ...text('x'), ...spaces(13), VERTICAL, ...NL,
+                VERTICAL, VERTICAL, ...text('a'), ...spaces(5), VERTICAL, ...spaces(6),
+                VERTICAL, ...spaces(14), VERTICAL, ...NL,
+                VERTICAL, BOTTOM_LEFT, ...line(6), BOTTOM_RIGHT, ...spaces(6),
+                VERTICAL, ...spaces(14), VERTICAL, ...NL,
+                BOTTOM_LEFT, ...line(14), BOTTOM, ...line(14), BOTTOM_RIGHT, ...SPACING_DEFAULT, ...NL,
+            ]), result);
+        });
+
+        it('should throw when it is wider than the cell', function () {
+            expect(() => new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 })
+                .table([ { width: 14 }, { width: 14 } ], [ [
+                    (cell) => cell.table([ {} ], [ [ 'a' ] ], { width: 16 }),
+                    'x',
+                ] ]).encode()).to.throw('Table is too wide');
         });
     });
 });

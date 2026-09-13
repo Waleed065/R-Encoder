@@ -123,6 +123,27 @@ import printerDefinitions from '../generated/printers.js';
  */
 
 /** @typedef {string | ((encoder: ReceiptPrinterEncoder) => void)} TableCellContent */
+
+/**
+ * @typedef {Object} TableSpannedCell
+ * @property {number} [span]
+ * @property {TableCellContent} [content]
+ * @property {Alignment} [align]
+ */
+
+/** @typedef {TableCellContent | TableSpannedCell} TableCell */
+
+/** @typedef {{ rule: true }} TableRule */
+
+/** @typedef {TableCell[] | TableRule} TableRow */
+
+/**
+ * @typedef {Object} TableOptions
+ * @property {'none' | 'single' | 'double'} [border]
+ * @property {'square' | 'rounded'} [corners]
+ * @property {'none' | 'all'} [rules]
+ * @property {number} [width]
+ */
 /** @typedef {string | ((encoder: ReceiptPrinterEncoder) => void)} BoxContent */
 
 
@@ -765,126 +786,521 @@ class ReceiptPrinterEncoder {
   /**
      * Insert a table
      *
-     * @param  {TableColumn[]}           columns  The column definitions
-     * @param  {TableCellContent[][]}    data     Array containing rows. Each row is an array containing cells.
-     *                                            Each cell can be a string value, or a callback function.
-     *                                            The first parameter of the callback is the encoder object on
-     *                                            which the function can call its methods.
+     * @param  {TableColumn[]}     columns    The column definitions
+     * @param  {TableRow[]}        data       Array containing rows. A row is either an array
+     *                                        containing cells, or an object with a rule property
+     *                                        set to true, which prints a horizontal rule between
+     *                                        two rows. A cell is a string value, a callback
+     *                                        function, or an object with a content, span and align
+     *                                        property, which lets the cell span multiple columns.
+     *                                        The first parameter of the callback is the encoder
+     *                                        object on which the function can call its methods.
+     * @param  {TableOptions}      [options]  An object with the following properties:
+     *                                        - border: The style of the border, either none, single or double
+     *                                        - corners: The style of the corners, either square or rounded
+     *                                        - rules: A rule between every pair of rows, either none or all
+     *                                        - width: The width of the table, by default the width of the paper
      * @return {ReceiptPrinterEncoder}                   Return the object, for easy chaining commands
      *
      */
-  table(columns, data) {
-    columns = this.#resolveColumns(columns);
+  table(columns, data, options) {
+    options = Object.assign({
+      border: 'none',
+      corners: 'square',
+      rules: 'none',
+    }, options || {});
 
-    this.#composer.flush();
+    if (!['none', 'single', 'double'].includes(options.border)) {
+      throw new Error('Unknown border style');
+    }
 
-    /* Process all lines */
+    if (!['square', 'rounded'].includes(options.corners)) {
+      throw new Error('Unknown corners');
+    }
 
-    for (let r = 0; r < data.length; r++) {
-      const lines = [];
-      let maxLines = 0;
+    if (!['none', 'all'].includes(options.rules)) {
+      throw new Error('Unknown rules');
+    }
 
-      /* A cell with a border needs the lines of the whole row printed without
-         line spacing, because its vertical lines have to touch the lines of
-         the rows above and below it */
-
-      let tight = false;
-
-      /* Render all columns */
-
-      for (let c = 0; c < columns.length; c++) {
-        const columnEncoder = new ReceiptPrinterEncoder(Object.assign({}, this.#options, {
-          width: columns[c].width * this.#composer.style.width,
-          embedded: true,
-          style: this.#inheritedStyle(),
-          overflow: columns[c].overflow,
-          borders: () => this.#borders(),
-        }));
-
-        columnEncoder.codepage(this.#codepage);
-
-        if (typeof columns[c].align !== 'undefined') {
-          columnEncoder.align(columns[c].align);
-        }
-
-        if (typeof data[r][c] === 'string') {
-          columnEncoder.text(data[r][c]);
-        }
-
-        if (typeof data[r][c] === 'function') {
-          data[r][c](columnEncoder);
-        }
-
-        const cell = columnEncoder.commands();
-
-        tight = tight || columnEncoder.#tight;
-
-        /* Determine the height in lines of the row */
-
-        maxLines = Math.max(maxLines, cell.length);
-
-        lines[c] = cell;
+    if (typeof options.width !== 'undefined') {
+      if (!Number.isInteger(options.width) || options.width < 1) {
+        throw new Error('Table width must be a positive integer');
       }
 
-      /* Pad the cells in this line to the same height */
-
-      for (let c = 0; c < columns.length; c++) {
-        if (lines[c].length >= maxLines) {
-          continue;
-        }
-
-        for (let p = lines[c].length; p < maxLines; p++) {
-          let verticalAlign = 'top';
-          if (typeof columns[c].verticalAlign !== 'undefined') {
-            verticalAlign = columns[c].verticalAlign;
-          }
-
-          const line = {
-            commands: LineComposer.padding(
-                columns[c].width * this.#composer.style.width,
-                {width: this.#composer.style.width, height: this.#composer.style.height},
-            ),
-            height: 1,
-          };
-
-          if (verticalAlign == 'bottom') {
-            lines[c].unshift(line);
-          } else {
-            lines[c].push(line);
-          }
-        }
-      }
-
-      /* Add the lines to the composer */
-
-      const previous = this.#state.lineSpacing;
-
-      for (let l = 0; l < maxLines; l++) {
-        if (tight && l === 0) {
-          this.#setLineSpacing('none');
-        }
-
-        for (let c = 0; c < columns.length; c++) {
-          if (typeof columns[c].marginLeft !== 'undefined') {
-            this.#composer.space(columns[c].marginLeft);
-          }
-
-          this.#composer.add(lines[c][l].commands, columns[c].width * this.#composer.style.width);
-
-          if (typeof columns[c].marginRight !== 'undefined') {
-            this.#composer.space(columns[c].marginRight);
-          }
-        }
-
-        if (tight && l === maxLines - 1) {
-          this.#setLineSpacing(previous);
-        }
-
-        this.#composer.flush();
+      if (options.width * this.#composer.style.width > this.#composer.columns) {
+        throw new Error('Table is too wide');
       }
     }
 
+    const bordered = options.border !== 'none';
+
+    columns = this.#resolveColumns(columns, options.width, bordered);
+
+    /* The width of the table in characters of the current size: the columns,
+       their margins and, with a border, one character for every vertical rule */
+
+    const width = columns.reduce(
+        (total, column) => total + column.width + (column.marginLeft || 0) + (column.marginRight || 0),
+        bordered ? columns.length + 1 : 0,
+    );
+
+    /* The cells of every row with their spans applied, and null for a rule row */
+
+    const rows = this.#resolveRows(columns, data, options, bordered);
+
+    /* The glyphs of the border, which a table without a border and without a
+       rule row does not need. The rule rows of a table without a border are
+       drawn with the single line glyphs */
+
+    const elements = bordered || rows.includes(null) ?
+      this.#borders().glyphs(bordered ? options.border : 'single', options.corners) :
+      null;
+
+    this.#composer.flush();
+
+    if (rows.length === 0) {
+      return this;
+    }
+
+    /* A bordered table is printed without line spacing from its top border to
+       its bottom border, so that its vertical rules touch. A request that comes
+       from the contents of a cell wraps the row that cell is in */
+
+    const previous = this.#state.lineSpacing;
+
+    if (bordered) {
+      this.#setLineSpacing('none');
+
+      this.#tableBorder(elements, width, new Set(), ReceiptPrinterEncoder.#tableRules(rows[0]));
+      this.#composer.flush();
+    }
+
+    for (let r = 0; r < rows.length; r++) {
+      if (rows[r] !== null) {
+        this.#tableRow(rows[r], elements, bordered, previous);
+        continue;
+      }
+
+      /* A rule row always has a row above and a row below it, the rules that
+         would double up with a border are dropped, but a neighbour that is
+         not there simply has no vertical rules */
+
+      this.#tableBorder(elements, width,
+          bordered ? ReceiptPrinterEncoder.#tableRules(rows[r - 1] ?? []) : new Set(),
+          bordered ? ReceiptPrinterEncoder.#tableRules(rows[r + 1] ?? []) : new Set());
+
+      this.#composer.flush();
+    }
+
+    if (bordered) {
+      this.#tableBorder(elements, width, ReceiptPrinterEncoder.#tableRules(rows[rows.length - 1]), new Set());
+
+      /* Restore the line spacing before the line feed of the bottom border,
+         so that the paper is fed as usual after the table */
+
+      this.#setLineSpacing(previous);
+      this.#composer.flush();
+    }
+
     return this;
+  }
+
+  /**
+     * Resolve the rows of a table: the cells of every row with their spans
+     * applied, and null for every rule row. With rules set to all a rule row
+     * is inserted between every pair of rows. A rule row that would double up
+     * with a line that is already there, directly after the top border,
+     * directly before the bottom border or directly after another rule row,
+     * is dropped.
+     *
+     * @param  {TableColumn[]}   columns    The column definitions, with numeric widths
+     * @param  {TableRow[]}      data       The rows of the table
+     * @param  {TableOptions}    options    The options of the table
+     * @param  {boolean}         bordered   True when the table has a border
+     * @return {Array}                      The rows, null for a rule row
+     */
+  #resolveRows(columns, data, options, bordered) {
+    const rows = [];
+
+    for (let r = 0; r < data.length; r++) {
+      let cells = null;
+
+      if (Array.isArray(data[r])) {
+        cells = this.#resolveCells(columns, data[r], r, bordered);
+      } else if (typeof data[r] !== 'object' || data[r] === null || data[r].rule !== true) {
+        throw new Error('A row must be an array of cells, or an object with rule set to true');
+      }
+
+      const last = rows.length > 0 ? rows[rows.length - 1] : undefined;
+
+      /* A rule between every pair of rows */
+
+      if (cells !== null && options.rules === 'all' && rows.length > 0 && last !== null) {
+        rows.push(null);
+      }
+
+      if (cells === null && (last === null || (bordered && rows.length === 0))) {
+        continue;
+      }
+
+      rows.push(cells);
+    }
+
+    /* A rule row at the end of a bordered table doubles up with the bottom border */
+
+    while (bordered && rows.length > 0 && rows[rows.length - 1] === null) {
+      rows.pop();
+    }
+
+    return rows;
+  }
+
+  /**
+     * Resolve the cells of one row of a table. A cell that spans columns is as
+     * wide as the columns it covers, plus the margins between those columns,
+     * plus one character for every vertical rule it swallows when the table
+     * has a border. A row without a spanned cell has one cell per column, a
+     * missing cell is empty.
+     *
+     * @param  {TableColumn[]}   columns    The column definitions, with numeric widths
+     * @param  {TableCell[]}     row        The cells of the row
+     * @param  {number}          index      The position of the row in the data
+     * @param  {boolean}         bordered   True when the table has a border
+     * @return {object[]}                   The cells of the row, with their widths and margins
+     */
+  #resolveCells(columns, row, index, bordered) {
+    if (!row.some(ReceiptPrinterEncoder.#isSpannedCell)) {
+      return columns.map((column, c) => ReceiptPrinterEncoder.#resolveCell([column], row[c], bordered));
+    }
+
+    const cells = [];
+    let position = 0;
+
+    for (const cell of row) {
+      const spanned = ReceiptPrinterEncoder.#isSpannedCell(cell);
+      const span = spanned && typeof cell.span !== 'undefined' ? cell.span : 1;
+
+      if (!Number.isInteger(span) || span < 1) {
+        throw new Error('The span of a cell must be a positive integer');
+      }
+
+      if (position + span > columns.length) {
+        throw new Error(`The spans of row ${index + 1} do not add up to the number of columns`);
+      }
+
+      cells.push(ReceiptPrinterEncoder.#resolveCell(columns.slice(position, position + span), cell, bordered));
+
+      position += span;
+    }
+
+    if (position !== columns.length) {
+      throw new Error(`The spans of row ${index + 1} do not add up to the number of columns`);
+    }
+
+    return cells;
+  }
+
+  /**
+     * Resolve one cell of a table against the columns it covers. Its outer
+     * margins are the left margin of the first column and the right margin of
+     * the last, its vertical alignment and its overflow are those of the first
+     * column, and an alignment on the cell itself overrides the alignment of
+     * that column.
+     *
+     * @param  {TableColumn[]}   covered    The columns the cell covers
+     * @param  {TableCell}       cell       The contents of the cell
+     * @param  {boolean}         bordered   True when the table has a border
+     * @return {object}                     The cell, with its width and margins
+     */
+  static #resolveCell(covered, cell, bordered) {
+    const spanned = ReceiptPrinterEncoder.#isSpannedCell(cell);
+
+    /* The vertical rules the cell swallows are part of its width */
+
+    let width = bordered ? covered.length - 1 : 0;
+
+    for (let i = 0; i < covered.length; i++) {
+      width += covered[i].width;
+
+      if (i > 0) {
+        width += covered[i].marginLeft || 0;
+      }
+
+      if (i < covered.length - 1) {
+        width += covered[i].marginRight || 0;
+      }
+    }
+
+    const first = covered[0];
+    const last = covered[covered.length - 1];
+
+    return {
+      width,
+      marginLeft: first.marginLeft || 0,
+      marginRight: last.marginRight || 0,
+      align: spanned && typeof cell.align !== 'undefined' ? cell.align : first.align,
+      verticalAlign: first.verticalAlign,
+      overflow: first.overflow,
+      content: spanned ? cell.content : cell,
+    };
+  }
+
+  /**
+     * Determine if a cell of a table is the object form that can span columns.
+     * Only a plain object is, anything else is a plain cell: a string and a
+     * callback function are printed, and everything else is an empty cell
+     *
+     * @param  {TableCell}   cell   The contents of the cell
+     * @return {boolean}            True when the cell is the object form
+     */
+  static #isSpannedCell(cell) {
+    return cell !== null && typeof cell === 'object' && !Array.isArray(cell);
+  }
+
+  /**
+     * The positions of the vertical rules of one row of a bordered table: the
+     * left edge of the table, every boundary between two cells and the right
+     * edge. A cell that spans columns has no rule inside it. A row without
+     * cells, which is a neighbour of a rule row that is not there, has none.
+     *
+     * @param  {object[]}   cells   The cells of the row
+     * @return {Set}                The character positions of the vertical rules
+     */
+  static #tableRules(cells) {
+    const positions = new Set(cells.length > 0 ? [0] : []);
+    let position = 0;
+
+    for (const cell of cells) {
+      position += 1 + cell.marginLeft + cell.width + cell.marginRight;
+      positions.add(position);
+    }
+
+    return positions;
+  }
+
+  /**
+     * The shape of the border glyph at one character position, from the four
+     * directions in which a line runs from it
+     *
+     * @param  {boolean}   up      True when the row above has a vertical rule here
+     * @param  {boolean}   down    True when the row below has a vertical rule here
+     * @param  {boolean}   left    True when the line continues to the left
+     * @param  {boolean}   right   True when the line continues to the right
+     * @return {string}            The name of the shape
+     */
+  static #borderShape(up, down, left, right) {
+    if (up && down) {
+      if (left && right) {
+        return 'middle';
+      }
+
+      if (right) {
+        return 'left';
+      }
+
+      if (left) {
+        return 'right';
+      }
+
+      return 'vertical';
+    }
+
+    if (left && right) {
+      if (up) {
+        return 'bottom';
+      }
+
+      if (down) {
+        return 'top';
+      }
+
+      return 'horizontal';
+    }
+
+    if (down) {
+      return right ? 'topLeft' : 'topRight';
+    }
+
+    if (up) {
+      return right ? 'bottomLeft' : 'bottomRight';
+    }
+
+    return 'horizontal';
+  }
+
+  /**
+     * Add one horizontal line of a table to the composer: the top border, the
+     * bottom border or a rule row. The glyph at every character position
+     * follows from the connectivity at that position: a vertical rule in the
+     * row above, a vertical rule in the row below, and the line of the border
+     * itself to the left and to the right, inside the table.
+     *
+     * @param  {object}   elements   The glyphs and code pages of the border
+     * @param  {number}   width      The width of the table in characters
+     * @param  {Set}      up         The positions of the vertical rules above the line
+     * @param  {Set}      down       The positions of the vertical rules below the line
+     */
+  #tableBorder(elements, width, up, down) {
+    let value = '';
+    let codepage = null;
+
+    for (let position = 0; position < width; position++) {
+      const element = elements[ReceiptPrinterEncoder.#borderShape(
+          up.has(position), down.has(position), position > 0, position < width - 1,
+      )];
+
+      /* The glyphs of a border can come from more than one code page, a run of
+         glyphs from the same page is printed as one fragment */
+
+      if (value.length > 0 && element.codepage !== codepage) {
+        this.#composer.text(value, codepage);
+        value = '';
+      }
+
+      codepage = element.codepage;
+      value += element.glyph;
+    }
+
+    if (value.length > 0) {
+      this.#composer.text(value, codepage);
+    }
+  }
+
+  /**
+     * Add one row of a table to the composer. Every printed line of the row is
+     * the lines of its cells side by side, with their margins between them,
+     * and with a vertical rule at the edges and at every boundary between two
+     * cells when the table has a border. The vertical rules are as tall as the
+     * tallest content of that printed line, the way a box draws them.
+     *
+     * @param  {object[]}      cells      The cells of the row, with their widths and margins
+     * @param  {object}        elements   The glyphs and code pages of the border
+     * @param  {boolean}       bordered   True when the table has a border
+     * @param  {LineSpacing}   previous   The line spacing to restore after a row that asked for none
+     */
+  #tableRow(cells, elements, bordered, previous) {
+    const lines = [];
+
+    /* A bordered row always prints at least one line, its vertical rules are
+       part of the frame of the table */
+
+    let maxLines = bordered ? 1 : 0;
+
+    /* A cell with a border needs the lines of the whole row printed without
+       line spacing, because its vertical lines have to touch the lines of
+       the rows above and below it */
+
+    let tight = false;
+
+    /* Render all cells */
+
+    for (let c = 0; c < cells.length; c++) {
+      const columnEncoder = new ReceiptPrinterEncoder(Object.assign({}, this.#options, {
+        width: cells[c].width * this.#composer.style.width,
+        embedded: true,
+        style: this.#inheritedStyle(),
+        overflow: cells[c].overflow,
+        borders: () => this.#borders(),
+      }));
+
+      columnEncoder.codepage(this.#codepage);
+
+      if (typeof cells[c].align !== 'undefined') {
+        columnEncoder.align(cells[c].align);
+      }
+
+      if (typeof cells[c].content === 'string') {
+        columnEncoder.text(cells[c].content);
+      }
+
+      if (typeof cells[c].content === 'function') {
+        cells[c].content(columnEncoder);
+      }
+
+      const cell = columnEncoder.commands();
+
+      tight = tight || columnEncoder.#tight;
+
+      /* Determine the height in lines of the row */
+
+      maxLines = Math.max(maxLines, cell.length);
+
+      lines[c] = cell;
+    }
+
+    /* Pad the cells in this row to the same height */
+
+    for (let c = 0; c < cells.length; c++) {
+      while (lines[c].length < maxLines) {
+        const line = {
+          commands: LineComposer.padding(
+              cells[c].width * this.#composer.style.width,
+              {width: this.#composer.style.width, height: this.#composer.style.height},
+          ),
+          height: 1,
+        };
+
+        if (cells[c].verticalAlign === 'bottom') {
+          lines[c].unshift(line);
+        } else {
+          lines[c].push(line);
+        }
+      }
+    }
+
+    /* The vertical rules are as tall as the line, the current height is restored after them */
+
+    const height = this.#composer.style.height;
+
+    /* Add the lines to the composer */
+
+    for (let l = 0; l < maxLines; l++) {
+      if (tight && !bordered && l === 0) {
+        this.#setLineSpacing('none');
+      }
+
+      const tallest = bordered ? Math.max(height, ...lines.map((cell) => cell[l].height)) : height;
+
+      if (bordered) {
+        this.#tableRule(elements, tallest, height);
+      }
+
+      for (let c = 0; c < cells.length; c++) {
+        if (cells[c].marginLeft) {
+          this.#composer.space(cells[c].marginLeft);
+        }
+
+        this.#composer.add(lines[c][l].commands, cells[c].width * this.#composer.style.width);
+
+        if (cells[c].marginRight) {
+          this.#composer.space(cells[c].marginRight);
+        }
+
+        if (bordered) {
+          this.#tableRule(elements, tallest, height);
+        }
+      }
+
+      if (tight && !bordered && l === maxLines - 1) {
+        this.#setLineSpacing(previous);
+      }
+
+      this.#composer.flush();
+    }
+  }
+
+  /**
+     * Add one vertical rule of a bordered table to the composer, as tall as
+     * the tallest content of the line it is part of
+     *
+     * @param  {object}   elements   The glyphs and code pages of the border
+     * @param  {number}   tallest    The height of the tallest content of the line
+     * @param  {number}   height     The height to restore after the rule
+     */
+  #tableRule(elements, tallest, height) {
+    this.#composer.style.height = tallest;
+    this.#composer.text(elements.vertical.glyph, elements.vertical.codepage);
+    this.#composer.style.height = height;
   }
 
   /**
@@ -894,10 +1310,18 @@ class ReceiptPrinterEncoder {
      * columns, the remaining space is divided evenly between them, the first
      * ones get any remainder. Widths are in characters of the current size.
      *
-     * @param  {TableColumn[]}   columns   The column definitions
-     * @return {TableColumn[]}             The column definitions with numeric widths
+     * The columns are resolved against the width of the table, which is the
+     * width of the paper when the table does not have one of its own. With a
+     * border one character per vertical rule, the number of columns plus one,
+     * is part of the fixed width, so a table with a fill column and a border
+     * fills its width exactly.
+     *
+     * @param  {TableColumn[]}   columns    The column definitions
+     * @param  {number}          [width]    The width of the table in characters of the current size
+     * @param  {boolean}         bordered   True when the table has a border
+     * @return {TableColumn[]}              The column definitions with numeric widths
      */
-  #resolveColumns(columns) {
+  #resolveColumns(columns, width, bordered) {
     if (!Array.isArray(columns) || columns.length === 0) {
       throw new Error('A table needs at least one column');
     }
@@ -921,9 +1345,18 @@ class ReceiptPrinterEncoder {
       fixed += (column.marginLeft || 0) + (column.marginRight || 0);
     }
 
-    /* The available width is the width of the line in characters of the current size */
+    /* Every vertical rule of a bordered table takes one character */
 
-    const available = Math.floor(this.#composer.columns / this.#composer.style.width);
+    if (bordered) {
+      fixed += columns.length + 1;
+    }
+
+    /* The available width is the width of the table, or of the line, in characters of the current size */
+
+    const available = typeof width === 'undefined' ?
+      Math.floor(this.#composer.columns / this.#composer.style.width) :
+      width;
+
     const remaining = available - fixed;
 
     /* Without fill columns the table must simply fit, with fill columns each of them needs at least one character */
