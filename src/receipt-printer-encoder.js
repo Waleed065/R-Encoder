@@ -10,6 +10,7 @@ import LanguageEscPos from './languages/esc-pos.js';
 import LanguageStarPrnt from './languages/star-prnt.js';
 import LineComposer from './line-composer.js';
 import Border from './border.js';
+import Markdown from './markdown.js';
 
 /* Import generated data */
 
@@ -1589,6 +1590,214 @@ class ReceiptPrinterEncoder {
     }
 
     return this;
+  }
+
+  /**
+     * Print Markdown
+     *
+     * Parses a subset of GitHub Flavored Markdown and queues the commands that
+     * are equivalent to it. Everything it prints goes through the commands of
+     * the encoder, so it can be used inside table cells and boxes as well. The
+     * current alignment, font and code page apply to everything it prints, and
+     * the current style is the base of every inline run: a run sets a style and
+     * restores the value it found afterwards.
+     *
+     * @param  {string}   value   The Markdown source that needs to be printed
+     * @return {ReceiptPrinterEncoder}          Return the object, for easy chaining commands
+     *
+     */
+  markdown(value) {
+    for (const block of Markdown.parse(value)) {
+      switch (block.type) {
+        case 'blank':
+          this.newline();
+          break;
+
+        case 'heading':
+          this.#markdownHeading(block);
+          break;
+
+        case 'rule':
+          this.rule();
+          break;
+
+        case 'table':
+          this.#markdownTable(block);
+          break;
+
+        case 'list':
+          this.#markdownList(block);
+          break;
+
+        default:
+          this.#markdownContent(block.content);
+          this.newline();
+      }
+    }
+
+    return this;
+  }
+
+  /**
+     * Print a heading of a Markdown document. A first level heading is printed
+     * at double size, a second level heading at double height, and a heading
+     * of the third level and deeper at the current size. All of them are bold,
+     * and the size and the bold style that were active before it are restored.
+     *
+     * @param  {object}   block   The heading block, with its level and content
+     */
+  #markdownHeading(block) {
+    const bold = this.#composer.style.bold;
+    const width = this.#composer.style.width;
+    const height = this.#composer.style.height;
+
+    if (block.level === 1) {
+      this.size(2, 2);
+    }
+
+    if (block.level === 2) {
+      this.size(1, 2);
+    }
+
+    this.bold(true);
+    this.#markdownContent(block.content);
+    this.bold(bold);
+    this.size(width, height);
+    this.newline();
+  }
+
+  /**
+     * Print a pipe table of a Markdown document. Every column is as wide as
+     * its longest cell, measured without the markup, and the columns are one
+     * space apart. When they do not fit the width that is available, the
+     * widest column loses one character at a time until they do, and the text
+     * of a column that lost characters wraps. When not even one character per
+     * column fits, the rows are printed as lines of text instead.
+     *
+     * @param  {object}   block   The table block, with its alignments, widths and rows
+     */
+  #markdownTable(block) {
+    const gaps = block.align.length - 1;
+    const available = Math.floor(this.#composer.columns / this.#composer.style.width);
+
+    /* A table that cannot be made to fit, in a column narrower than one
+       character per cell, is printed as lines of text rather than thrown away */
+
+    if (available < gaps + block.align.length) {
+      if (block.header) {
+        const bold = this.#composer.style.bold;
+
+        this.bold(true);
+        this.#markdownCells(block.header);
+        this.bold(bold);
+        this.newline();
+      }
+
+      for (const row of block.rows) {
+        this.#markdownCells(row);
+        this.newline();
+      }
+
+      return;
+    }
+
+    const widths = Markdown.fit(block.widths, available - gaps);
+
+    const columns = block.align.map((align, i) => ({
+      width: widths[i],
+      align,
+      marginRight: i < gaps ? 1 : 0,
+    }));
+
+    const rows = block.rows.map((row) => row.map((cell) => (encoder) => encoder.#markdownContent(cell)));
+
+    /* The header row is printed in bold, a header without content is left out */
+
+    if (block.header) {
+      rows.unshift(block.header.map((cell) => (encoder) => encoder.#markdownHeader(cell)));
+    }
+
+    this.table(columns, rows);
+  }
+
+  /**
+     * Print the cells of one row of a Markdown table as text, one space apart,
+     * which is what a table that is too narrow for a layout falls back to
+     *
+     * @param  {Array<object[]>}   cells   The inline content of every cell of the row
+     */
+  #markdownCells(cells) {
+    cells.forEach((cell, index) => {
+      if (index > 0) {
+        this.text(' ');
+      }
+
+      this.#markdownContent(cell);
+    });
+  }
+
+  /**
+     * Print one cell of the header row of a Markdown table, which is bold on
+     * top of the style the cell inherits
+     *
+     * @param  {object[]}   cell   The inline content of the cell
+     */
+  #markdownHeader(cell) {
+    const bold = this.#composer.style.bold;
+
+    this.bold(true);
+    this.#markdownContent(cell);
+    this.bold(bold);
+  }
+
+  /**
+     * Print a list of a Markdown document as a table with a marker column and
+     * a fill column, so that the lines of an item that wraps hang under the
+     * text of that item instead of under its marker. When the marker column
+     * does not leave at least one character for the text, every item is
+     * printed as a line of text with its marker in front of it instead.
+     *
+     * @param  {object}   block   The list block, with its items and the width of the marker column
+     */
+  #markdownList(block) {
+    const available = Math.floor(this.#composer.columns / this.#composer.style.width);
+
+    if (available < block.width + 1) {
+      for (const item of block.items) {
+        this.text(`${item.marker} `);
+        this.#markdownContent(item.content);
+        this.newline();
+      }
+
+      return;
+    }
+
+    this.table(
+        [{width: block.width}, {}],
+        block.items.map((item) => [item.marker, (encoder) => encoder.#markdownContent(item.content)]),
+    );
+  }
+
+  /**
+     * Print the inline content of a block of a Markdown document. A styled run
+     * sets its style and restores the value it found afterwards, so a run
+     * inside a context that already has that style is a no-op.
+     *
+     * @param  {object[]}   nodes   The inline content, text and styled runs
+     */
+  #markdownContent(nodes) {
+    for (const node of nodes) {
+      if (node.type === 'text') {
+        this.text(node.value);
+        continue;
+      }
+
+      const previous = this.#composer.style[node.style];
+
+      this[node.style](true);
+      this.#markdownContent(node.content);
+      this[node.style](previous);
+    }
   }
 
   /**
