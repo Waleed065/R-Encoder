@@ -9,6 +9,7 @@ import resizeImageData from 'resize-image-data';
 import LanguageEscPos from './languages/esc-pos.js';
 import LanguageStarPrnt from './languages/star-prnt.js';
 import LineComposer from './line-composer.js';
+import Border from './border.js';
 
 /* Import generated data */
 
@@ -27,6 +28,7 @@ import printerDefinitions from '../generated/printers.js';
 /** @typedef {'relaxed' | 'strict'} ErrorLevel */
 /** @typedef {'small' | 'normal'} TextSize */
 /** @typedef {'full' | 'partial'} CutType */
+/** @typedef {'default' | 'none'} LineSpacing */
 /** @typedef {'upca' | 'upce' | 'ean13' | 'ean8' | 'code39' | 'itf' | 'codabar' | 'code93' | 'code128' | 'code128-auto' | 'gs1-128' | 'gs1-databar-omni' | 'gs1-databar-truncated' | 'gs1-databar-limited' | 'gs1-databar-expanded'} BarcodeSymbology */
 
 /**
@@ -66,7 +68,9 @@ import printerDefinitions from '../generated/printers.js';
 
 /**
  * @typedef {Object} BoxOptions
- * @property {'single' | 'double' | 'none'} [style]
+ * @property {'single' | 'double' | 'none'} [border]
+ * @property {'square' | 'rounded'} [corners]
+ * @property {'single' | 'double' | 'none'} [style]   Deprecated alias for border
  * @property {number} [width]
  * @property {Alignment} [align]
  * @property {number} [marginLeft]
@@ -159,10 +163,13 @@ class ReceiptPrinterEncoder {
   #codepageMapping = {};
   #codepageCandidates = [];
   #codepage = 'cp437';
+  #border = null;
+  #tight = false;
 
   #state = {
     'codepage': -1,
     'font': 'A',
+    'lineSpacing': 'default',
   };
 
 
@@ -288,7 +295,7 @@ class ReceiptPrinterEncoder {
 
     /* Set the default codepage for the printer language */
 
-    this.#codepage = this.#options.language == 'esc-pos' ? 'cp437' : 'star/standard';
+    this.#codepage = this.#defaultCodepage();
 
     /* Create our line composer */
 
@@ -311,6 +318,42 @@ class ReceiptPrinterEncoder {
 
       callback: (value) => this.#queue.push(value),
     });
+  }
+
+  /**
+     * The code page the encoder starts with: the default of the printer
+     * language when the printer has it, otherwise the first page of its
+     * code page mapping
+     *
+     * @return {Codepage}   The name of the code page
+     */
+  #defaultCodepage() {
+    const codepage = this.#options.language == 'esc-pos' ? 'cp437' : 'star/standard';
+
+    if (typeof this.#codepageMapping[codepage] !== 'undefined') {
+      return codepage;
+    }
+
+    return Object.keys(this.#codepageMapping)[0] || codepage;
+  }
+
+  /**
+     * Get the glyphs and code pages the borders of boxes and tables are drawn
+     * with. Looking them up means encoding a handful of glyphs in every code
+     * page of the printer, so it is done once, when the first border is drawn.
+     * Table cells and boxes take the borders of the encoder they are embedded
+     * in, which is why they get an accessor rather than the object itself
+     *
+     * @return {Border}   The borders of this encoder
+     */
+  #borders() {
+    if (this.#border === null) {
+      this.#border = this.#options.embedded && typeof this.#options.borders === 'function' ?
+        this.#options.borders() :
+        new Border(this.#codepageMapping);
+    }
+
+    return this.#border;
   }
 
   /**
@@ -343,9 +386,10 @@ class ReceiptPrinterEncoder {
 
     /* Reset the state of the encoder */
 
-    this.#codepage = this.#options.language == 'esc-pos' ? 'cp437' : 'star/standard';
+    this.#codepage = this.#defaultCodepage();
     this.#state.codepage = -1;
     this.#state.font = 'A';
+    this.#state.lineSpacing = 'default';
 
     this.#createComposer();
 
@@ -661,6 +705,62 @@ class ReceiptPrinterEncoder {
     return this;
   }
 
+  /**
+     * Change the line spacing
+     *
+     * @param  {LineSpacing}          value   default or none
+     * @return {ReceiptPrinterEncoder}                  Return the object, for easy chaining commands
+     *
+     */
+  lineSpacing(value) {
+    if (this.#options.embedded) {
+      throw new Error('Changing the line spacing is not supported in table cells or boxes');
+    }
+
+    const values = ['default', 'none'];
+
+    if (!values.includes(value)) {
+      throw new Error('Unknown line spacing');
+    }
+
+    this.#setLineSpacing(value);
+
+    return this;
+  }
+
+  /**
+     * Change the line spacing, without validating the value. Used by the
+     * command and by the borders of boxes and tables, which are printed
+     * without line spacing so that their vertical lines touch. In an embedded
+     * encoder it only records that its lines have to be printed that way
+     *
+     * @param  {LineSpacing}   value   The line spacing, default or none
+     */
+  #setLineSpacing(value) {
+    /* The lines of a table cell or a box are interleaved with the lines of the
+       cells next to them, so an embedded encoder cannot change the line
+       spacing itself. It records the request and the encoder it is embedded
+       in, which knows where its lines start and end, wraps them */
+
+    if (this.#options.embedded) {
+      if (value === 'none') {
+        this.#tight = true;
+      }
+
+      return;
+    }
+
+    if (value === this.#state.lineSpacing) {
+      return;
+    }
+
+    this.#composer.add(
+        this.#language.lineSpacing(value),
+    );
+
+    this.#state.lineSpacing = value;
+  }
+
   // eslint-disable-next-line valid-jsdoc
   /**
      * Insert a table
@@ -684,6 +784,12 @@ class ReceiptPrinterEncoder {
       const lines = [];
       let maxLines = 0;
 
+      /* A cell with a border needs the lines of the whole row printed without
+         line spacing, because its vertical lines have to touch the lines of
+         the rows above and below it */
+
+      let tight = false;
+
       /* Render all columns */
 
       for (let c = 0; c < columns.length; c++) {
@@ -692,6 +798,7 @@ class ReceiptPrinterEncoder {
           embedded: true,
           style: this.#inheritedStyle(),
           overflow: columns[c].overflow,
+          borders: () => this.#borders(),
         }));
 
         columnEncoder.codepage(this.#codepage);
@@ -709,6 +816,8 @@ class ReceiptPrinterEncoder {
         }
 
         const cell = columnEncoder.commands();
+
+        tight = tight || columnEncoder.#tight;
 
         /* Determine the height in lines of the row */
 
@@ -748,7 +857,13 @@ class ReceiptPrinterEncoder {
 
       /* Add the lines to the composer */
 
+      const previous = this.#state.lineSpacing;
+
       for (let l = 0; l < maxLines; l++) {
+        if (tight && l === 0) {
+          this.#setLineSpacing('none');
+        }
+
         for (let c = 0; c < columns.length; c++) {
           if (typeof columns[c].marginLeft !== 'undefined') {
             this.#composer.space(columns[c].marginLeft);
@@ -759,6 +874,10 @@ class ReceiptPrinterEncoder {
           if (typeof columns[c].marginRight !== 'undefined') {
             this.#composer.space(columns[c].marginRight);
           }
+        }
+
+        if (tight && l === maxLines - 1) {
+          this.#setLineSpacing(previous);
         }
 
         this.#composer.flush();
@@ -874,7 +993,8 @@ class ReceiptPrinterEncoder {
      * Insert a box
      *
      * @param  {BoxOptions}       options   And object with the following properties:
-     *                                      - style: The style of the border, either single or double
+     *                                      - border: The style of the border, either none, single or double
+     *                                      - corners: The style of the corners, either square or rounded
      *                                      - width: The width of the box, by default the width of the paper
      *                                      - marginLeft: Space between the left border and the left edge
      *                                      - marginRight: Space between the right border and the right edge
@@ -889,12 +1009,25 @@ class ReceiptPrinterEncoder {
   box(options, contents) {
     options = Object.assign({
       style: 'single',
+      corners: 'square',
       width: this.#options.columns,
       marginLeft: 0,
       marginRight: 0,
       paddingLeft: 0,
       paddingRight: 0,
     }, options || {});
+
+    /* The style option is the old name of the border option, which wins when both are given */
+
+    const border = typeof options.border === 'undefined' ? options.style : options.border;
+
+    if (!['none', 'single', 'double'].includes(border)) {
+      throw new Error('Unknown border style');
+    }
+
+    if (!['square', 'rounded'].includes(options.corners)) {
+      throw new Error('Unknown corners');
+    }
 
     if (!Number.isInteger(options.width) || options.width < 1) {
       throw new Error('Box width must be a positive integer');
@@ -906,17 +1039,12 @@ class ReceiptPrinterEncoder {
       throw new Error('Box is too wide');
     }
 
-    let elements;
-
-    if (options.style == 'single') {
-      elements = ['┌', '┐', '└', '┘', '─', '│'];
-    } else if (options.style == 'double') {
-      elements = ['╔', '╗', '╚', '╝', '═', '║'];
-    }
+    const bordered = border !== 'none';
+    const elements = bordered ? this.#borders().glyphs(border, options.corners) : null;
 
     /* Render the contents of the box */
 
-    const innerWidth = options.width - (options.style == 'none' ? 0 : 2) - options.paddingLeft - options.paddingRight;
+    const innerWidth = options.width - (bordered ? 2 : 0) - options.paddingLeft - options.paddingRight;
 
     if (innerWidth < 0) {
       throw new Error('Box is too narrow');
@@ -926,6 +1054,7 @@ class ReceiptPrinterEncoder {
       width: innerWidth * this.#composer.style.width,
       embedded: true,
       style: this.#inheritedStyle(),
+      borders: () => this.#borders(),
     }));
 
     columnEncoder.codepage(this.#codepage);
@@ -944,6 +1073,14 @@ class ReceiptPrinterEncoder {
 
     const lines = columnEncoder.commands();
 
+    /* The lines of the box are printed without line spacing when it has a
+       border, or when its contents contain something that needs it, such as a
+       bordered box or table. An embedded box passes the request on to the
+       encoder it is embedded in, which wraps the lines it is part of */
+
+    const previous = this.#state.lineSpacing;
+    const tight = bordered || (columnEncoder.#tight && lines.length > 0);
+
     /* The vertical borders are as tall as the line, the current height is restored after them */
 
     const height = this.#composer.style.height;
@@ -952,11 +1089,17 @@ class ReceiptPrinterEncoder {
 
     this.#composer.flush();
 
-    if (options.style != 'none') {
+    if (tight) {
+      /* Without line spacing the vertical lines of consecutive lines touch */
+
+      this.#setLineSpacing('none');
+    }
+
+    if (bordered) {
       this.#composer.space(options.marginLeft);
-      this.#composer.text(elements[0], 'cp437');
-      this.#composer.text(elements[4].repeat(options.width - 2), 'cp437');
-      this.#composer.text(elements[1], 'cp437');
+      this.#composer.text(elements.topLeft.glyph, elements.topLeft.codepage);
+      this.#composer.text(elements.horizontal.glyph.repeat(options.width - 2), elements.horizontal.codepage);
+      this.#composer.text(elements.topRight.glyph, elements.topRight.codepage);
       this.#composer.space(options.marginRight);
       this.#composer.flush();
     }
@@ -966,9 +1109,9 @@ class ReceiptPrinterEncoder {
     for (let i = 0; i < lines.length; i++) {
       this.#composer.space(options.marginLeft);
 
-      if (options.style != 'none') {
+      if (bordered) {
         this.#composer.style.height = Math.max(height, lines[i].height);
-        this.#composer.text(elements[5], 'cp437');
+        this.#composer.text(elements.vertical.glyph, elements.vertical.codepage);
         this.#composer.style.height = height;
       }
 
@@ -976,24 +1119,39 @@ class ReceiptPrinterEncoder {
       this.#composer.add(lines[i].commands, innerWidth * this.#composer.style.width);
       this.#composer.space(options.paddingRight);
 
-      if (options.style != 'none') {
+      if (bordered) {
         this.#composer.style.height = Math.max(height, lines[i].height);
-        this.#composer.text(elements[5], 'cp437');
+        this.#composer.text(elements.vertical.glyph, elements.vertical.codepage);
         this.#composer.style.height = height;
       }
 
       this.#composer.space(options.marginRight);
+
+      /* A box without a border restores the line spacing on its last line */
+
+      if (tight && !bordered && i === lines.length - 1) {
+        this.#setLineSpacing(previous);
+      }
+
       this.#composer.flush();
     }
 
     /* Footer */
 
-    if (options.style != 'none') {
+    if (bordered) {
       this.#composer.space(options.marginLeft);
-      this.#composer.text(elements[2], 'cp437');
-      this.#composer.text(elements[4].repeat(options.width - 2), 'cp437');
-      this.#composer.text(elements[3], 'cp437');
+      this.#composer.text(elements.bottomLeft.glyph, elements.bottomLeft.codepage);
+      this.#composer.text(elements.horizontal.glyph.repeat(options.width - 2), elements.horizontal.codepage);
+      this.#composer.text(elements.bottomRight.glyph, elements.bottomRight.codepage);
       this.#composer.space(options.marginRight);
+
+      /* Restore the line spacing before the line feed of the bottom border,
+         so that the paper is fed as usual after the box */
+
+      if (tight) {
+        this.#setLineSpacing(previous);
+      }
+
       this.#composer.flush();
     }
 

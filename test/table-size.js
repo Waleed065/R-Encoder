@@ -8,6 +8,8 @@ import { assert } from 'chai';
 describe('Size inheritance in tables and boxes', function() {
     const NL = [ 10, 13 ];
     const CODEPAGE = [ 27, 116, 0 ];
+    const SPACING_NONE = [ 27, 51, 0 ];
+    const SPACING_DEFAULT = [ 27, 50 ];
     const SIZE2 = [ 29, 33, 17 ];
     const SIZE1 = [ 29, 33, 0 ];
     const WIDTH1_HEIGHT2 = [ 29, 33, 1 ];
@@ -88,9 +90,9 @@ describe('Size inheritance in tables and boxes', function() {
             const horizontal = new Array(14).fill(196);
 
             assert.deepEqual(new Uint8Array([
-                ...SIZE2, ...CODEPAGE, 218, ...horizontal, 191, ...SIZE1, ...NL,
+                ...SIZE2, ...SPACING_NONE, ...CODEPAGE, 218, ...horizontal, 191, ...SIZE1, ...NL,
                 ...SIZE2, 179, ...text('hi'), ...WIDTH1_HEIGHT2, ...spaces(24), ...SIZE2, 179, ...SIZE1, ...NL,
-                ...SIZE2, 192, ...horizontal, 217, ...SIZE1, ...NL,
+                ...SIZE2, 192, ...horizontal, 217, ...SPACING_DEFAULT, ...SIZE1, ...NL,
             ]), result);
         });
     });
@@ -101,9 +103,9 @@ describe('Size inheritance in tables and boxes', function() {
             const horizontal = new Array(14).fill(196);
 
             assert.deepEqual(new Uint8Array([
-                ...CODEPAGE, 218, ...horizontal, 191, ...NL,
+                ...SPACING_NONE, ...CODEPAGE, 218, ...horizontal, 191, ...NL,
                 ...WIDTH1_HEIGHT2, 179, ...text('hi'), ...SIZE1, ...spaces(12), ...WIDTH1_HEIGHT2, 179, ...SIZE1, ...NL,
-                192, ...horizontal, 217, ...NL,
+                192, ...horizontal, 217, ...SPACING_DEFAULT, ...NL,
             ]), result);
         });
     });

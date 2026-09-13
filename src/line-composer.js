@@ -366,16 +366,29 @@ class LineComposer {
     /* State commands that were pending before the line started, such as a font
        change, go before the alignment padding. A font change alters the width
        of the characters, so the printer must apply it before it prints the
-       spaces, otherwise the line is padded in the width of the previous font */
+       spaces, otherwise the line is padded in the width of the previous font.
+       The same goes for a code page and for the line spacing, which move ahead
+       of a pending style change as well, because the two are independent.
+       Only the commands in front of the first item that prints are moved, the
+       other state commands keep their place, and raw data stops the hoisting:
+       raw bytes are the user's, and what comes after them stays after them */
 
-    let lead = 0;
+    const leading = [];
+    const trailing = [];
 
-    while (lead < items.length && LEADING_TYPES.includes(items[lead].type)) {
-      lead++;
+    let printing = false;
+
+    for (const item of items) {
+      if (!printing && (!STATE_TYPES.includes(item.type) || item.type === 'raw')) {
+        printing = true;
+      }
+
+      if (!printing && LEADING_TYPES.includes(item.type)) {
+        leading.push(item);
+      } else {
+        trailing.push(item);
+      }
     }
-
-    const leading = items.slice(0, lead);
-    const trailing = items.slice(lead);
 
     if (this.#cursor === 0 && (options.ignoreAlignment || !this.#embedded)) {
       result = this.#merge([

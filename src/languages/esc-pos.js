@@ -45,6 +45,45 @@ class LanguageEscPos {
   }
 
   /**
+     * Change the line spacing
+     * @param {string|number} value    Line spacing ('default', 'none', or a number of motion units)
+     * @return {Array}         Array of bytes to send to the printer
+     */
+  lineSpacing(value) {
+    if (value === 'default') {
+      return [
+        {
+          type: 'line-spacing',
+          value: 'default',
+          payload: [0x1b, 0x32],
+        },
+      ];
+    }
+
+    if (value === 'none') {
+      return [
+        {
+          type: 'line-spacing',
+          value: 'none',
+          payload: [0x1b, 0x33, 0x00],
+        },
+      ];
+    }
+
+    if (typeof value === 'number') {
+      return [
+        {
+          type: 'line-spacing',
+          value: `${value} dots`,
+          payload: [0x1b, 0x33, value],
+        },
+      ];
+    }
+
+    throw new Error('Unknown line spacing');
+  }
+
+  /**
      * Change the alignment
      * @param {string} value    Alignment value ('left', 'center', 'right')
      * @return {Array}         Array of bytes to send to the printer
@@ -490,13 +529,7 @@ class LanguageEscPos {
         );
       }
 
-      result.push(
-          {
-            type: 'line-spacing',
-            value: '24 dots',
-            payload: [0x1b, 0x33, 0x18],
-          },
-      );
+      result.push(...this.lineSpacing(24));
 
       getColumnData(width, height).forEach((bytes) => {
         result.push(
@@ -511,13 +544,7 @@ class LanguageEscPos {
         );
       });
 
-      result.push(
-          {
-            type: 'line-spacing',
-            value: 'default',
-            payload: [0x1b, 0x32],
-          },
-      );
+      result.push(...this.lineSpacing('default'));
 
       /* Restore the default motion units */
 
