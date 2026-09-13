@@ -2075,7 +2075,7 @@ class ReceiptPrinterEncoder {
     const name = input.constructor.name;
     let type;
 
-    name.endsWith('Element') ? type = 'element' : null;
+    name.endsWith('Element') || name == 'ImageBitmap' ? type = 'element' : null;
     name == 'ImageData' ? type = 'imagedata' : null;
     name == 'Canvas' && typeof input.getContext !== 'undefined' ? type = 'node-canvas' : null;
     name == 'Image' ? type = 'node-canvas-image' : null;
