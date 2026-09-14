@@ -94,11 +94,14 @@ describe('Markdown', function() {
         equal('a rule with spaces between its characters', '- - -', (encoder) => encoder.rule());
         equal('a rule of more than three characters', '-----', (encoder) => encoder.rule());
 
+        /* The widest column, Price, takes the space that is left over, so the
+           table is as wide as the paper of the encoder it is printed on */
+
         equal('a pipe table', '| Item | Price |\n|:-----|------:|\n| Beer | 13.00 |',
             (encoder) => encoder.table(
                 [
                     { width: 4, align: 'left', marginRight: 1 },
-                    { width: 5, align: 'right', marginRight: 0 },
+                    { width: encoder.columns - 5, align: 'right', marginRight: 0 },
                 ],
                 [
                     [ (cell) => cell.bold(true).text('Item').bold(false),
@@ -235,31 +238,31 @@ describe('Markdown', function() {
         it('should print the header in bold and align the columns', function () {
             assert.equal(
                 print((encoder) => encoder.markdown('| a | bb | ccc |\n|:--|:-:|--:|\n| 1 | 2 | 3 |')),
-                lines('a bb ccc', '1 2    3'));
+                lines('a bb' + 'ccc'.padStart(38), '1 2 ' + '3'.padStart(38)));
         });
 
         it('should not print a header row whose cells are all empty', function () {
             assert.equal(
                 print((encoder) => encoder.markdown('| | |\n|-|-|\n| a | b |\n| cc | dd |')),
-                lines('a  b ', 'cc dd'));
+                lines('a'.padEnd(40) + 'b ', 'cc'.padEnd(40) + 'dd'));
         });
 
         it('should measure the columns without the markup', function () {
             assert.equal(
                 print((encoder) => encoder.markdown('| a | b |\n|---|---|\n| **wide** | x |')),
-                lines('a    b', 'wide x'));
+                lines('a'.padEnd(41) + 'b', 'wide'.padEnd(41) + 'x'));
         });
 
         it('should print a literal pipe that is escaped', function () {
             assert.equal(
                 print((encoder) => encoder.markdown('| a | b |\n|---|---|\n| x \\| y | z |')),
-                lines('a     b', 'x | y z'));
+                lines('a'.padEnd(41) + 'b', 'x | y'.padEnd(41) + 'z'));
         });
 
         it('should add empty cells to a short row and drop the cells of a long one', function () {
             assert.equal(
                 print((encoder) => encoder.markdown('| a | b |\n|---|---|\n| x |\n| y | z | q |')),
-                lines('a b', 'x  ', 'y z'));
+                lines('a'.padEnd(41) + 'b', 'x'.padEnd(42), 'y'.padEnd(41) + 'z'));
         });
 
         it('should take the widest column down one character at a time when the columns do not fit', function () {
@@ -273,16 +276,49 @@ describe('Markdown', function() {
                     'x'.padEnd(20) + ' ' + 'y'.padEnd(21)));
         });
 
+        it('should give the space that is left over to the widest column', function () {
+            assert.equal(
+                print((encoder) => encoder.markdown('| a | bbb |\n|---|----:|\n| x | y |')),
+                lines('a ' + 'bbb'.padStart(40), 'x ' + 'y'.padStart(40)));
+        });
+
+        it('should give the space that is left over to the first of the widest columns', function () {
+            assert.equal(
+                print((encoder) => encoder.markdown('| aa | bb |\n|---|---|\n| x | y |')),
+                lines('aa'.padEnd(40) + 'bb', 'x'.padEnd(40) + 'y '));
+        });
+
+        it('should leave the columns of a table that had to be reduced as they are', function () {
+            const source = `| ${'a'.repeat(40)} | ${'b'.repeat(40)} |\n|---|---|\n| x | y |`;
+
+            assert.equal(
+                print((encoder) => encoder.markdown(source)),
+                lines(
+                    'a'.repeat(20) + ' ' + 'b'.repeat(21),
+                    'a'.repeat(20) + ' ' + 'b'.repeat(19) + '  ',
+                    'x'.padEnd(20) + ' ' + 'y'.padEnd(21)));
+        });
+
+        it('should give the space that is left over inside a cell to the widest column', function () {
+            assert.equal(
+                print((encoder) => encoder.table(
+                    [ { width: 12 }, { width: 30 } ],
+                    [ [ (cell) => cell.markdown('| a | bbb |\n|---|---|\n| 1 | 2 |'), 'plain' ] ])),
+                lines(
+                    'a ' + 'bbb'.padEnd(10) + 'plain'.padEnd(30),
+                    '1 ' + '2'.padEnd(10) + ' '.repeat(30)));
+        });
+
         it('should stop at a line without a pipe', function () {
             assert.equal(
                 print((encoder) => encoder.markdown('| a |\n|---|\n| x |\nplain')),
-                lines('a', 'x', 'plain'));
+                lines('a'.padEnd(42), 'x'.padEnd(42), 'plain'));
         });
 
         it('should stop at a blank line', function () {
             assert.equal(
                 print((encoder) => encoder.markdown('| a |\n|---|\n| x |\n\n| y |')),
-                lines('a', 'x', '', '| y |'));
+                lines('a'.padEnd(42), 'x'.padEnd(42), '', '| y |'));
         });
 
         it('should measure a cell the way the composer measures it', function () {
@@ -292,7 +328,7 @@ describe('Markdown', function() {
             const result = print((encoder) => encoder.markdown('| \u{1f642}\u{1f642} | x |\n|---|---|\n| a | b |'));
 
             assert.equal(result.split('\n').length - 1, 2);
-            assert.equal(result.split('\n')[1], 'a    b');
+            assert.equal(result.split('\n')[1], 'a'.padEnd(41) + 'b');
         });
 
         it('should print the rows as lines of text when not even one character per column fits', function () {
@@ -401,9 +437,9 @@ describe('Markdown', function() {
                     '',
                     '─'.repeat(42),
                     '',
-                    'Item    Qty  Price',
-                    'Beer      2  13.00',
-                    'Chidori   2 172.80',
+                    'Item'.padEnd(32) + 'Qty  Price',
+                    'Beer'.padEnd(34) + '2  13.00',
+                    'Chidori'.padEnd(34) + '2 172.80',
                     '',
                     '─'.repeat(42),
                     '',
@@ -472,8 +508,8 @@ describe('Markdown', function() {
                     [ { width: 20 }, { width: 22 } ],
                     [ [ (cell) => cell.markdown('| a | b |\n|---|---|\n| 1 | 2 |'), 'plain' ] ])),
                 lines(
-                    'a b'.padEnd(20) + 'plain'.padEnd(22),
-                    '1 2'.padEnd(20) + ' '.repeat(22)));
+                    'a'.padEnd(19) + 'b' + 'plain'.padEnd(22),
+                    '1'.padEnd(19) + '2' + ' '.repeat(22)));
         });
 
         it('should measure a heading inside a cell in the size of that cell', function () {

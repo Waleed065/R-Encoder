@@ -1671,8 +1671,10 @@ class ReceiptPrinterEncoder {
      * its longest cell, measured without the markup, and the columns are one
      * space apart. When they do not fit the width that is available, the
      * widest column loses one character at a time until they do, and the text
-     * of a column that lost characters wraps. When not even one character per
-     * column fits, the rows are printed as lines of text instead.
+     * of a column that lost characters wraps. When they leave space over, the
+     * widest column takes all of it, so that the table is as wide as the space
+     * it is printed in. When not even one character per column fits, the rows
+     * are printed as lines of text instead.
      *
      * @param  {object}   block   The table block, with its alignments, widths and rows
      */
@@ -1701,7 +1703,7 @@ class ReceiptPrinterEncoder {
       return;
     }
 
-    const widths = Markdown.fit(block.widths, available - gaps);
+    const widths = Markdown.expand(Markdown.fit(block.widths, available - gaps), available - gaps);
 
     const columns = block.align.map((align, i) => ({
       width: widths[i],

@@ -205,6 +205,39 @@ class Markdown {
   }
 
   /**
+     * Grow the columns of a table to fill the space that is available: what
+     * is left over after the columns have been fitted goes to the widest
+     * column, the first of them when several are equally wide, so that a
+     * table is as wide as the paper, or as wide as the cell it is printed in.
+     * A table whose columns had to be reduced to fit has nothing left over
+     * and keeps the widths it was given.
+     *
+     * @param  {number[]}   widths      The width of every column, as fitted in the space that is available
+     * @param  {number}     available   The space that is available for the columns
+     * @return {number[]}               The width of every column
+     */
+  static expand(widths, available) {
+    const result = [...widths];
+    const total = result.reduce((sum, width) => sum + width, 0);
+
+    if (total >= available) {
+      return result;
+    }
+
+    let widest = 0;
+
+    for (let i = 1; i < result.length; i++) {
+      if (result[i] > result[widest]) {
+        widest = i;
+      }
+    }
+
+    result[widest] += available - total;
+
+    return result;
+  }
+
+  /**
      * Split the source into lines. A byte order mark at the start of the
      * source is not content and is dropped. A line break ends a line, so a
      * document that ends with one does not get an empty line at the end, and
