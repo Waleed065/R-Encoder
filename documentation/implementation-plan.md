@@ -194,6 +194,20 @@ The example that motivates the section, a two by two table with a rule row betwe
 
 **Tests.** In `test/table-border.js` or a new `test/table-cell-border.js`, as byte assertions or as strings of the paper: the example above; the same with the bottom right cell off instead; every cell off, which prints the rows with spaces where the rules were and no horizontal lines at all; a per side form with only the left side off, and only the bottom; a cell with `border: 'none'` in the middle of three columns; a spanned cell without a border under two bordered cells (`┴` becomes `┘` and `└` at the ends and the segment stays because the cells above own it); `rules: 'all'` with a borderless cell; rounded corners with a borderless corner cell, where the corner moves to the next owned position; the throw for the other style; a plain cell next to a borderless one; a table without a border ignoring the property. The randomised geometry check of Section 3, if it exists as a test, extends to random per cell borders: every line still has the width of the table and every junction matches the rules around it.
 
+### Section 3c: Outline and margins per cell
+
+Two additions to the bordered table, both on the ownership model of Section 3b.
+
+**Outline.** A table option `outline`, with the vocabulary of the cell borders: `'none'` turns the whole outline off, an object with any of `top`, `right`, `bottom` and `left` set to `'none'` turns those sides off, and the sides left out keep the table's style. The outline is applied as a mask after the cell borders are resolved: the top side of the cells of the first row, the bottom side of the cells of the last row, the left side of the first cell of every row and the right side of the last cell of every row are cleared where the outline is off. With `rules: 'all'` that gives grid lines between the cells only; with `rules: 'none'` only the vertical dividers.
+
+The columns of the outer rules are part of the width accounting only where the outline is on: with `outline: 'none'`, or with `left` or `right` off, the table has one rule character fewer on that side, so its content spans the full width and a fill column takes that character. The top and bottom lines are then blank over their whole width and are not printed, which Section 3b already does. A table without a border ignores the option. The option is validated like the cell borders: a side may only be turned off.
+
+**Margins per cell.** A cell object accepts `marginLeft` and `marginRight`, which override the margins of the column for that cell. The cell keeps the total of the column, so its content width is the column's width plus the column's margins minus the cell's, and every row stays as wide as the table; a cell whose margins leave no width for the content throws with the row number. For a spanned cell the override applies to its outer margins, the margins between the covered columns stay. Plain cells keep the column's margins.
+
+**Docs.** The `outline` option next to `border`, `corners`, `rules` and `width` in the Table section of `commands.md`, with an example of a grid without an outline, and the two cell properties in the list of cell properties; bullets in `changes.md`.
+
+**Tests.** In `test/table-cell-border.js` or a new file: a grid with `rules: 'all'` and `outline: 'none'`, asserted as a string of the paper and one character narrower on each side, with a fill column taking the width; `outline: { top: 'none' }` keeping the sides and the bottom; `outline: { left: 'none' }` shifting the content by one character; the outline of a table without a border ignored; the throw for a wrong value; a cell with `marginLeft: 2` in a column with `marginLeft: 0` printing its content two characters in with the row still the table's width; a cell whose margins exceed the column throwing; a spanned cell with overridden outer margins; the randomised geometry check extended with random outlines and random cell margins. Every existing test unchanged.
+
 ### Section 4: `markdown()`
 
 ```js
