@@ -165,6 +165,35 @@ The typedefs are `TableRow = TableCell[] | TableRule` and `TableCell = TableCell
 
 **Tests.** Tests are in `test/table-border.js` and `test/table-span.js`: a single row bordered table equals the same content in a `box()` with `paddingLeft` and `paddingRight` zero, byte for byte, on all three languages; rule rows produce `├ ┼ ┤`; `rules: 'all'` equals the same table with explicit rule rows, and both together do not double up; rounded corners on the Epson mapping produce receiptline's bytes; a rule row at the top, at the bottom and doubled is dropped; a double height cell makes the `│` of that line double height and nothing else; a bordered table that is too wide throws with the border characters counted; a fill column in a bordered table takes the width minus the rules, and with a `width` fills exactly that; a `width` larger than the paper throws; a centred table with a `width` is padded like a centred line; a spanned cell over two columns with margins and a border has the computed width, and the rule rows above and below it show `┴` and `┬` at the swallowed boundary; a span that does not add up throws with the row number; a spanned cell wraps, clips and aligns like a plain cell of that width; spans in an unbordered table; `overflow: 'clip'` cells inside a border; unbordered tables with rule rows; nesting, in `test/nesting.js`: a bordered table inside a cell of a bordered table, a bordered table inside a box and a box inside a bordered cell, checked as strings of the paper, with the line spacing commands of the inner table appearing once at its start and once at its end inside the outer table's lines, and a nested table with a `width` resolved against the cell width; every existing table test still passes unchanged. Nesting of tables and boxes works today in every combination (a table in a cell, a box in a cell, a table in a box, a box in a box) but no test says so, which `test/nesting.js` fixes for the unbordered cases as well.
 
+### Section 3b: Borders per cell
+
+A cell of a bordered table can turn its own border off, entirely or per side:
+
+```js
+{ content: 'Total', span: 2, border: 'none' }                 // no border on any side
+{ content: 'Total', border: { left: 'none', bottom: 'none' } } // the sides that are left out keep the table's style
+```
+
+The values a cell may use are the table's own border style and `'none'`; a cell that asks for the other style throws with a message saying that a cell can only turn its border off, because single and double lines cannot be joined on every printer (the Epson Katakana page has no mixed junctions). A plain cell, a string or a callback, has the table's border on every side. Cells in a table without a border ignore the property.
+
+**The model.** An edge is drawn when either of the cells next to it wants it. A vertical rule at a boundary is drawn when the cell on its left wants its right side or the cell on its right wants its left side; a rule at the table's edge when the edge cell wants that side. A horizontal segment between two rows is drawn over a cell's width when that cell wants its bottom side or the cell below it wants its top side; the top border when the cell of the first row wants its top, the bottom border when the cell of the last row wants its bottom. A suppressed rule keeps its column as a space, so every row stays as wide as the table. A horizontal line that comes out blank over its whole width is not printed at all.
+
+**What changes.** The row's vertical rule positions (`#tableRules`) are filtered by ownership instead of listing every boundary. The horizontal line builder (`#tableBorder`) takes, next to the rule positions above and below, the positions covered by owned horizontal segments, and derives the left and right bits of every position from them, instead of assuming a line everywhere inside the table; the connectivity map and the glyph function stay, with a blank result for no bits. The row renderer prints a single width space instead of `│` where a rule is not owned. Rule rows, `rules: 'all'` included, follow the same ownership: a rule under a cell without a bottom side still appears where the cell below wants its top side.
+
+The example that motivates the section, a two by two table with the bottom left cell turned off:
+
+```
+┌──────────┬───────────┐
+│          │           │
+└──────────┼───────────┤
+           │           │
+           └───────────┘
+```
+
+**Docs.** The `border` property of a cell in the Table section of `commands.md`, both forms, the rule that a cell can only turn its border off, and the example above. A bullet in `changes.md`.
+
+**Tests.** In `test/table-border.js` or a new `test/table-cell-border.js`, as byte assertions or as strings of the paper: the example above; the same with the bottom right cell off instead; every cell off, which prints the rows with spaces where the rules were and no horizontal lines at all; a per side form with only the left side off, and only the bottom; a cell with `border: 'none'` in the middle of three columns; a spanned cell without a border under two bordered cells (`┴` becomes `┘` and `└` at the ends and the segment stays because the cells above own it); `rules: 'all'` with a borderless cell; rounded corners with a borderless corner cell, where the corner moves to the next owned position; the throw for the other style; a plain cell next to a borderless one; a table without a border ignoring the property. The randomised geometry check of Section 3, if it exists as a test, extends to random per cell borders: every line still has the width of the table and every junction matches the rules around it.
+
 ### Section 4: `markdown()`
 
 ```js
