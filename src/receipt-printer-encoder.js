@@ -47,8 +47,28 @@ import printerDefinitions from '../generated/printers.js';
  * @property {boolean} [debug]
  * @property {boolean} [embedded]
  * @property {((width: number, height: number) => HTMLCanvasElement) | null} [createCanvas]
+ * @property {ReceiptLineModule | null} [receiptline]
  * @property {number} [width]
  * @property {boolean} [autoFlush]
+ */
+
+/**
+ * Print a receiptline document onto an encoder, the transform function of
+ * @point-of-sale/receiptline
+ *
+ * @callback ReceiptLineTransform
+ * @param {ReceiptPrinterEncoder} encoder   The encoder to print on
+ * @param {string} document                 The receiptline document
+ * @param {object} [options]                The options of the module
+ * @return {Promise<ReceiptPrinterEncoder>}
+ */
+
+/**
+ * The module that prints receiptline documents, @point-of-sale/receiptline,
+ * given to the encoder through the receiptline option
+ *
+ * @typedef {Object} ReceiptLineModule
+ * @property {ReceiptLineTransform} transform
  */
 
 /**
@@ -249,6 +269,7 @@ class ReceiptPrinterEncoder {
         debug: false,
         embedded: false,
         createCanvas: null,
+        receiptline: null,
       }, options);
     }
 
@@ -1636,6 +1657,36 @@ class ReceiptPrinterEncoder {
     }
 
     return this;
+  }
+
+  /**
+     * Print a receiptline document. The layout comes from the receiptline
+     * module given in the options, @point-of-sale/receiptline, which prints
+     * the document through the regular commands. This is the one command
+     * that is async, because the images in a document have to be decoded,
+     * so it has to be awaited before the next command.
+     *
+     * @param  {string}   value      The receiptline document
+     * @param  {object}   [options]  The options of the module, see its documentation
+     * @return {Promise<ReceiptPrinterEncoder>}   Resolves with the object, for chaining the commands that follow
+     *
+     */
+  receiptline(value, options) {
+    /* The checks are synchronous, so that a wrong use throws right away
+       instead of rejecting later, like every other command */
+
+    if (this.#options.embedded) {
+      throw new Error('Printing a receiptline document is not supported in table cells or boxes');
+    }
+
+    if (this.#options.receiptline === null || typeof this.#options.receiptline.transform !== 'function') {
+      throw new Error(
+          'Printing a receiptline document needs the receiptline option, ' +
+          'set it to the @point-of-sale/receiptline module when creating the encoder',
+      );
+    }
+
+    return Promise.resolve(this.#options.receiptline.transform(this, value, options)).then(() => this);
   }
 
   /**
