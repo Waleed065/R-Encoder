@@ -45,20 +45,20 @@ describe('Table borders', function() {
     describe('a bordered table with one row and one column', function () {
         it('should equal the same content in a box, byte for byte, on esc-pos', function () {
             assert.deepEqual(
-                encode((e) => e.table([ { width: 8 } ], [ [ 'hi' ] ], { border: 'single' })),
-                encode((e) => e.box({ width: 10, border: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi')));
+                encode((e) => e.table([ { width: 8 } ], [ [ 'hi' ] ], { outline: 'single', border: 'single' })),
+                encode((e) => e.box({ width: 10, outline: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi')));
         });
 
         it('should equal the same content in a box, byte for byte, on star-prnt', function () {
             assert.deepEqual(
-                encode((e) => e.table([ { width: 8 } ], [ [ 'hi' ] ], { border: 'single' }), { language: 'star-prnt', columns: 48 }),
-                encode((e) => e.box({ width: 10, border: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi'), { language: 'star-prnt', columns: 48 }));
+                encode((e) => e.table([ { width: 8 } ], [ [ 'hi' ] ], { outline: 'single', border: 'single' }), { language: 'star-prnt', columns: 48 }),
+                encode((e) => e.box({ width: 10, outline: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi'), { language: 'star-prnt', columns: 48 }));
         });
 
         it('should equal the same content in a box, byte for byte, on star-line', function () {
             assert.deepEqual(
-                encode((e) => e.table([ { width: 8 } ], [ [ 'hi' ] ], { border: 'single' }), { language: 'star-line', columns: 48 }),
-                encode((e) => e.box({ width: 10, border: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi'), { language: 'star-line', columns: 48 }));
+                encode((e) => e.table([ { width: 8 } ], [ [ 'hi' ] ], { outline: 'single', border: 'single' }), { language: 'star-line', columns: 48 }),
+                encode((e) => e.box({ width: 10, outline: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi'), { language: 'star-line', columns: 48 }));
         });
     });
 
@@ -66,7 +66,7 @@ describe('Table borders', function() {
         let result = encode((e) => e.table(
             [ { width: 6 }, { width: 6 } ],
             [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ] ],
-            { border: 'single' },
+            { outline: 'single', border: 'single' },
         ));
 
         it('should draw the junctions of the rule row as a left, middle and right junction', function () {
@@ -90,14 +90,14 @@ describe('Table borders', function() {
 
         it('should equal the same table with explicit rule rows', function () {
             assert.deepEqual(
-                encode((e) => e.table(columns, [ [ 'a', 'b' ], [ 'c', 'd' ], [ 'e', 'f' ] ], { border: 'single', rules: 'all' })),
-                encode((e) => e.table(columns, [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ], { rule: true }, [ 'e', 'f' ] ], { border: 'single' })));
+                encode((e) => e.table(columns, [ [ 'a', 'b' ], [ 'c', 'd' ], [ 'e', 'f' ] ], { outline: 'single', border: 'single', rules: 'all' })),
+                encode((e) => e.table(columns, [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ], { rule: true }, [ 'e', 'f' ] ], { outline: 'single', border: 'single' })));
         });
 
         it('should not double up with explicit rule rows', function () {
             assert.deepEqual(
-                encode((e) => e.table(columns, [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ] ], { border: 'single', rules: 'all' })),
-                encode((e) => e.table(columns, [ [ 'a', 'b' ], [ 'c', 'd' ] ], { border: 'single', rules: 'all' })));
+                encode((e) => e.table(columns, [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ] ], { outline: 'single', border: 'single', rules: 'all' })),
+                encode((e) => e.table(columns, [ [ 'a', 'b' ], [ 'c', 'd' ] ], { outline: 'single', border: 'single', rules: 'all' })));
         });
     });
 
@@ -108,8 +108,8 @@ describe('Table borders', function() {
             assert.deepEqual(
                 encode((e) => e.table(columns, [
                     { rule: true }, [ 'a', 'b' ], { rule: true }, { rule: true }, [ 'c', 'd' ], { rule: true },
-                ], { border: 'single' })),
-                encode((e) => e.table(columns, [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ] ], { border: 'single' })));
+                ], { outline: 'single', border: 'single' })),
+                encode((e) => e.table(columns, [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ] ], { outline: 'single', border: 'single' })));
         });
     });
 
@@ -117,7 +117,7 @@ describe('Table borders', function() {
         let result = encode((e) => e.table(
             [ { width: 6 }, { width: 6 } ],
             [ [ 'a', 'b' ], { rule: true }, [ 'c', 'd' ] ],
-            { border: 'single', corners: 'rounded' },
+            { outline: 'single', border: 'single', corners: 'rounded' },
         ), { columns: 42 });
 
         it('should draw the whole table in the Katakana page', function () {
@@ -137,7 +137,7 @@ describe('Table borders', function() {
         let result = encode((e) => e.table(
             [ { width: 6 }, { width: 6 } ],
             [ [ (cell) => cell.height(2).text('a'), 'b' ] ],
-            { border: 'single' },
+            { outline: 'single', border: 'single' },
         ));
 
         it('should print the vertical rules of that line at double height and nothing else', function () {
@@ -153,7 +153,7 @@ describe('Table borders', function() {
 
     describe('a bordered table that is one character too wide', function () {
         it('should count the border characters and throw', function () {
-            expect(() => encode((e) => e.table([ { width: 15 }, { width: 15 } ], [ [ 'a', 'b' ] ], { border: 'single' })))
+            expect(() => encode((e) => e.table([ { width: 15 }, { width: 15 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single' })))
                 .to.throw('Table is too wide');
         });
 
@@ -166,8 +166,8 @@ describe('Table borders', function() {
     describe('a fill column in a bordered table', function () {
         it('should take the width of the paper minus the fixed columns and the rules', function () {
             assert.deepEqual(
-                encode((e) => e.table([ {}, { width: 8 } ], [ [ 'a', 'b' ] ], { border: 'single' })),
-                encode((e) => e.table([ { width: 21 }, { width: 8 } ], [ [ 'a', 'b' ] ], { border: 'single' })));
+                encode((e) => e.table([ {}, { width: 8 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single' })),
+                encode((e) => e.table([ { width: 21 }, { width: 8 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single' })));
         });
 
         it('should fill the width of the table exactly', function () {
@@ -175,7 +175,7 @@ describe('Table borders', function() {
                 ...SPACING_NONE, ...CODEPAGE, TOP_LEFT, ...line(9), TOP, ...line(8), TOP_RIGHT, ...NL,
                 VERTICAL, ...text('a'), ...spaces(8), VERTICAL, ...text('b'), ...spaces(7), VERTICAL, ...NL,
                 BOTTOM_LEFT, ...line(9), BOTTOM, ...line(8), BOTTOM_RIGHT, ...SPACING_DEFAULT, ...NL,
-            ]), encode((e) => e.table([ {}, { width: 8 } ], [ [ 'a', 'b' ] ], { border: 'single', width: 20 })));
+            ]), encode((e) => e.table([ {}, { width: 8 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single', width: 20 })));
         });
     });
 
@@ -208,7 +208,7 @@ describe('Table borders', function() {
                 ...SPACING_NONE, ...CODEPAGE, ...spaces(6), TOP_LEFT, ...line(9), TOP, ...line(8), TOP_RIGHT, ...NL,
                 ...spaces(6), VERTICAL, ...text('a'), ...spaces(8), VERTICAL, ...text('b'), ...spaces(7), VERTICAL, ...NL,
                 ...spaces(6), BOTTOM_LEFT, ...line(9), BOTTOM, ...line(8), BOTTOM_RIGHT, ...SPACING_DEFAULT, ...NL,
-            ]), encode((e) => e.align('center').table([ {}, { width: 8 } ], [ [ 'a', 'b' ] ], { border: 'single', width: 20 })));
+            ]), encode((e) => e.align('center').table([ {}, { width: 8 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single', width: 20 })));
         });
     });
 
@@ -221,7 +221,7 @@ describe('Table borders', function() {
             ]), encode((e) => e.table(
                 [ { width: 6, overflow: 'clip' }, { width: 6 } ],
                 [ [ 'abcdefghij', 'b' ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )));
         });
     });
@@ -257,7 +257,7 @@ describe('Table borders', function() {
                 0xcc, ...repeat(0xcd, 6), 0xb9, ...NL,
                 0xba, ...text('b'), ...spaces(5), 0xba, ...NL,
                 0xc8, ...repeat(0xcd, 6), 0xbc, ...SPACING_DEFAULT, ...NL,
-            ]), encode((e) => e.table([ { width: 6 } ], [ [ 'a' ], { rule: true }, [ 'b' ] ], { border: 'double' })));
+            ]), encode((e) => e.table([ { width: 6 } ], [ [ 'a' ], { rule: true }, [ 'b' ] ], { outline: 'double', border: 'double' })));
         });
     });
 
@@ -279,13 +279,13 @@ describe('Table borders', function() {
                 ...SIZE2, VERTICAL, ...SIZE1, ...NL,
                 ...SIZE2, BOTTOM_LEFT, ...line(6), BOTTOM, ...line(6), BOTTOM_RIGHT,
                 ...SPACING_DEFAULT, ...SIZE1, ...NL,
-            ]), encode((e) => e.size(2).table([ { width: 6 }, { width: 6 } ], [ [ 'a', 'b' ] ], { border: 'single' }), { columns: 42 }));
+            ]), encode((e) => e.size(2).table([ { width: 6 }, { width: 6 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single' }), { columns: 42 }));
         });
 
         it('should equal the same content in a box at double size', function () {
             assert.deepEqual(
-                encode((e) => e.size(2).table([ { width: 8 } ], [ [ 'hi' ] ], { border: 'single' }), { columns: 42 }),
-                encode((e) => e.size(2).box({ width: 10, border: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi'), { columns: 42 }));
+                encode((e) => e.size(2).table([ { width: 8 } ], [ [ 'hi' ] ], { outline: 'single', border: 'single' }), { columns: 42 }),
+                encode((e) => e.size(2).box({ width: 10, outline: 'single', paddingLeft: 0, paddingRight: 0 }, 'hi'), { columns: 42 }));
         });
     });
 
@@ -303,7 +303,7 @@ describe('Table borders', function() {
             ]), encode((e) => e.table(
                 [ { width: 4 }, { width: 4 } ],
                 [ [ 'a', 'b' ] ],
-                { border: 'single', corners: 'rounded' },
+                { outline: 'single', border: 'single', corners: 'rounded' },
             ), { language: 'star-prnt', columns: 48 }));
         });
     });
@@ -319,7 +319,7 @@ describe('Table borders', function() {
             ]), encode((e) => e.table(
                 [ { width: 4, verticalAlign: 'bottom' }, { width: 4 } ],
                 [ [ 'x', (cell) => cell.text('1\n2\n3') ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )));
         });
     });
@@ -333,7 +333,7 @@ describe('Table borders', function() {
             ]), encode((e) => e.table(
                 [ { width: 8, overflow: 'ellipsis' }, { width: 6 } ],
                 [ [ 'Cappuccino', 'b' ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )));
         });
     });

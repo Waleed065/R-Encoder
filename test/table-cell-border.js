@@ -34,6 +34,10 @@ describe('Borders per table cell', function() {
         0xc2: '┬', 0xc1: '┴', 0xc3: '├', 0xb4: '┤', 0xc5: '┼',
         0xcd: '═', 0xba: '║', 0xc9: '╔', 0xbb: '╗', 0xc8: '╚', 0xbc: '╝',
         0xcb: '╦', 0xca: '╩', 0xcc: '╠', 0xb9: '╣', 0xce: '╬',
+        0xd5: '╒', 0xb8: '╕', 0xd4: '╘', 0xbe: '╛', 0xc6: '╞', 0xb5: '╡',
+        0xd1: '╤', 0xcf: '╧', 0xd8: '╪',
+        0xd6: '╓', 0xb7: '╖', 0xd3: '╙', 0xbd: '╜', 0xc7: '╟', 0xb6: '╢',
+        0xd2: '╥', 0xd0: '╨', 0xd7: '╫',
     };
 
     const paper = (bytes) => {
@@ -76,7 +80,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 10 }, { width: 11 } ],
                 [ [ '', '' ], { rule: true }, [ { content: '', border: 'none' }, '' ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )), lines(
                 '┌──────────┬───────────┐',
                 '│          │           │',
@@ -90,7 +94,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 10 }, { width: 11 } ],
                 [ [ '', '' ], { rule: true }, [ '', { content: '', border: 'none' } ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )), lines(
                 '┌──────────┬───────────┐',
                 '│          │           │',
@@ -108,7 +112,7 @@ describe('Borders per table cell', function() {
                 [ { content: 'a', border: 'none' }, { content: 'b', border: 'none' } ],
                 [ { content: 'c', border: 'none' }, { content: 'd', border: 'none' } ],
             ],
-            { border: 'single' },
+            { outline: 'single', border: 'single' },
         );
 
         it('should print the rows with spaces where the rules were and no horizontal lines at all', function () {
@@ -133,7 +137,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 6 }, { width: 6 } ],
                 [ [ { content: 'a', border: { left: 'none' } }, 'b' ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )), lines(
                 '───────┬──────┐',
                 ' a     │b     │',
@@ -145,7 +149,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 6 }, { width: 6 } ],
                 [ [ { content: 'a', border: { bottom: 'none' } }, 'b' ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )), lines(
                 '┌──────┬──────┐',
                 '│a     │b     │',
@@ -159,7 +163,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 5 }, { width: 5 }, { width: 5 } ],
                 [ [ 'a', { content: 'b', border: 'none' }, 'c' ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )), lines(
                 '┌─────┐     ┌─────┐',
                 '│a    │b    │c    │',
@@ -173,7 +177,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 6 }, { width: 6 } ],
                 [ [ 'a', 'b' ], { rule: true }, [ { span: 2, content: 'total', border: 'none' } ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )), lines(
                 '┌──────┬──────┐',
                 '│a     │b     │',
@@ -188,7 +192,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 6 }, { width: 6 } ],
                 [ [ 'a', 'b' ], [ { content: 'c', border: 'none' }, 'd' ], [ 'e', 'f' ] ],
-                { border: 'single', rules: 'all' },
+                { outline: 'single', border: 'single', rules: 'all' },
             )), lines(
                 '┌──────┬──────┐',
                 '│a     │b     │',
@@ -214,7 +218,7 @@ describe('Borders per table cell', function() {
             ]), encode((e) => e.table(
                 [ { width: 6 }, { width: 6 } ],
                 [ [ { content: 'a', border: 'none' }, 'b' ], { rule: true }, [ 'c', 'd' ] ],
-                { border: 'single', corners: 'rounded' },
+                { outline: 'single', border: 'single', corners: 'rounded' },
             ), { columns: 42 }));
         });
     });
@@ -224,7 +228,7 @@ describe('Borders per table cell', function() {
             assert.equal(print((e) => e.table(
                 [ { width: 6 }, { width: 6 } ],
                 [ [ 'a', { content: 'b', border: 'none' } ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             )), lines(
                 '┌──────┐       ',
                 '│a     │b      ',
@@ -239,9 +243,9 @@ describe('Borders per table cell', function() {
                 encode((e) => e.table(
                     [ { width: 6 }, { width: 6 } ],
                     [ [ { content: 'a', border: 'single' }, { content: 'b', border: {} } ] ],
-                    { border: 'single' },
+                    { outline: 'single', border: 'single' },
                 )),
-                encode((e) => e.table([ { width: 6 }, { width: 6 } ], [ [ 'a', 'b' ] ], { border: 'single' })));
+                encode((e) => e.table([ { width: 6 }, { width: 6 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single' })));
         });
 
         it('should be the same as a plain cell per side', function () {
@@ -249,9 +253,9 @@ describe('Borders per table cell', function() {
                 encode((e) => e.table(
                     [ { width: 6 }, { width: 6 } ],
                     [ [ { content: 'a', border: { top: 'single', left: 'single' } }, 'b' ] ],
-                    { border: 'single' },
+                    { outline: 'single', border: 'single' },
                 )),
-                encode((e) => e.table([ { width: 6 }, { width: 6 } ], [ [ 'a', 'b' ] ], { border: 'single' })));
+                encode((e) => e.table([ { width: 6 }, { width: 6 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single' })));
         });
     });
 
@@ -271,7 +275,7 @@ describe('Borders per table cell', function() {
             expect(() => encode((e) => e.table(
                 [ { width: 6 } ],
                 [ [ 'a' ], [ { content: 'b', border: 'double' } ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             ))).to.throw('A cell of row 2 can only turn its border off');
         });
 
@@ -279,7 +283,7 @@ describe('Borders per table cell', function() {
             expect(() => encode((e) => e.table(
                 [ { width: 6 } ],
                 [ [ { content: 'a', border: { top: 'single', bottom: 'double' } } ] ],
-                { border: 'double' },
+                { outline: 'double', border: 'double' },
             ))).to.throw('A cell of row 1 can only turn its border off');
         });
 
@@ -287,29 +291,62 @@ describe('Borders per table cell', function() {
             expect(() => encode((e) => e.table(
                 [ { width: 6 } ],
                 [ [ { content: 'a', border: true } ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             ))).to.throw('A cell of row 1 can only turn its border off');
         });
     });
 
-    /* A few hundred random tables, with random borders per cell and per side,
-       a random outline, random margins per column and per cell, checked
-       against the rules the drawing has to follow: every printed line is as
-       wide as the table, which is one character narrower on every side of the
-       outline that is off, every row has a vertical rule exactly at the
-       boundaries one of the cells next to it wants, and every glyph of a
-       horizontal line has an up and a down stroke where the rows above and
-       below it have a rule, and a horizontal stroke exactly where the cells
-       above and below own a segment. The ownership is worked out here from
-       the cells themselves, the glyphs are read from the paper */
+    /* A few hundred random tables, with an independent random style for the
+       outline and for the lines between the cells, random borders per cell and
+       per side, random margins per column and per cell, checked against the
+       rules the drawing has to follow: every printed line is as wide as the
+       table, which has a column for a divider only when the table has a border
+       and a column for an outer rule only where that side of the outline is
+       drawn, every row has a vertical rule exactly at the boundaries one of the
+       cells next to it wants, and every glyph of a horizontal line has the
+       strokes the cells above and below it ask for, in the style of the line on
+       each axis: the style of the horizontal line for its left and right
+       strokes, and the style of the vertical rule at that position for its up
+       and down strokes. The ownership is worked out here from the cells
+       themselves, the glyphs are read from the paper */
 
-    describe('random tables with random borders, outlines and margins', function () {
-        const STROKES = {
-            ' ': '', '─': 'lr', '│': 'ud', '┌': 'dr', '┐': 'dl', '└': 'ur', '┘': 'ul',
-            '├': 'udr', '┤': 'udl', '┬': 'dlr', '┴': 'ulr', '┼': 'udlr',
-            '═': 'lr', '║': 'ud', '╔': 'dr', '╗': 'dl', '╚': 'ur', '╝': 'ul',
-            '╠': 'udr', '╣': 'udl', '╦': 'dlr', '╩': 'ulr', '╬': 'udlr',
+    describe('random tables with random styles, borders, outlines and margins', function () {
+        /* The strokes of the eleven shapes, and the glyph of every shape for
+           every combination of the style of the horizontal and of the vertical
+           line that meet in it, in the same order */
+
+        const SHAPES = {
+            horizontal: 'lr', vertical: 'ud',
+            topLeft: 'dr', topRight: 'dl', bottomLeft: 'ur', bottomRight: 'ul',
+            left: 'udr', right: 'udl', top: 'dlr', bottom: 'ulr', middle: 'udlr',
         };
+
+        const SETS = {
+            single: { single: '─│┌┐└┘├┤┬┴┼', double: '─║╓╖╙╜╟╢╥╨╫' },
+            double: { single: '═│╒╕╘╛╞╡╤╧╪', double: '═║╔╗╚╝╠╣╦╩╬' },
+        };
+
+        /* The strokes of every glyph a table can draw, with the style of the
+           line each of its axes is part of, which is how a glyph on the paper
+           is read back */
+
+        const GLYPH = new Map([ [ ' ', { strokes: '', horizontal: null, vertical: null } ] ]);
+
+        for (const horizontal of Object.keys(SETS)) {
+            for (const vertical of Object.keys(SETS[horizontal])) {
+                Object.values(SHAPES).forEach((strokes, i) => {
+                    const glyph = SETS[horizontal][vertical][i];
+
+                    if (!GLYPH.has(glyph)) {
+                        GLYPH.set(glyph, {
+                            strokes,
+                            horizontal: /[lr]/.test(strokes) ? horizontal : null,
+                            vertical: /[ud]/.test(strokes) ? vertical : null,
+                        });
+                    }
+                });
+            }
+        }
 
         /* A seeded generator, so that a failing table can be reproduced */
 
@@ -324,48 +361,83 @@ describe('Borders per table cell', function() {
             return ((value ^ (value >>> 14)) >>> 0) % n;
         };
 
-        const side = (style) => random(3) === 0 ? 'none' : style;
+        const style = () => [ 'none', 'single', 'double' ][random(3)];
 
-        /* The sides a border value, of a cell or of the outline of the table,
-           asks for: only turning a side off is allowed, so every side that is
-           not none is drawn */
+        /* The outline option, which is a style for every side, an object with
+           any of the four sides, where the sides that are left out are none,
+           or nothing at all */
+
+        const outline = () => {
+            if (random(4) === 0) {
+                return undefined;
+            }
+
+            if (random(3) === 0) {
+                const value = {};
+
+                for (const side of [ 'top', 'right', 'bottom', 'left' ]) {
+                    if (random(4) > 0) {
+                        value[side] = style();
+                    }
+                }
+
+                return value;
+            }
+
+            return style();
+        };
+
+        /* The style of every side of the outline, the sides that are left out
+           and an outline that is not there being none */
 
         const sides = (value) => {
-            const result = { top: true, right: true, bottom: true, left: true };
+            const result = { top: 'none', right: 'none', bottom: 'none', left: 'none' };
 
-            for (const key of Object.keys(result)) {
-                if (value === 'none' || (typeof value === 'object' && value !== null && value[key] === 'none')) {
-                    result[key] = false;
+            for (const side of Object.keys(result)) {
+                if (typeof value === 'string') {
+                    result[side] = value;
+                } else if (value !== null && typeof value === 'object' && typeof value[side] !== 'undefined') {
+                    result[side] = value[side];
                 }
             }
 
             return result;
         };
 
-        const border = (style) => {
+        /* The border of a cell, which can only turn a side off: every other
+           value it may use is a style the table itself draws with */
+
+        const keep = (styles) => random(2) === 0 || styles.length === 0 ?
+            'none' :
+            styles[random(styles.length)];
+
+        const border = (styles) => {
             switch (random(4)) {
                 case 0:
                     return undefined;
                 case 1:
                     return 'none';
                 case 2:
-                    return { top: side(style), right: side(style), bottom: side(style), left: side(style) };
+                    return { top: keep(styles), right: keep(styles), bottom: keep(styles), left: keep(styles) };
                 default:
-                    return style;
+                    return styles.length === 0 ? undefined : styles[random(styles.length)];
             }
         };
 
-        const outline = (style) => {
-            switch (random(4)) {
-                case 0:
-                    return undefined;
-                case 1:
-                    return 'none';
-                case 2:
-                    return { top: side(style), right: side(style), bottom: side(style), left: side(style) };
-                default:
-                    return style;
+        /* The sides a cell wants, which is every side of a plain cell and of a
+           cell of a table that draws no lines at all */
+
+        const wanted = (value, bordered) => {
+            const result = { top: true, right: true, bottom: true, left: true };
+
+            for (const side of Object.keys(result)) {
+                if (bordered && (value === 'none' ||
+                    (typeof value === 'object' && value !== null && value[side] === 'none'))) {
+                    result[side] = false;
+                }
             }
+
+            return result;
         };
 
         /* A row of cells, which every now and then spans two columns. The
@@ -373,16 +445,17 @@ describe('Borders per table cell', function() {
            their characters from the contents, so they can never take more
            than the cell has */
 
-        const row = (columns, style) => {
+        const row = (columns, layout) => {
             const cells = [];
             let c = 0;
 
             while (c < columns.length) {
                 const span = 1 + random(Math.min(2, columns.length - c));
-                const cell = { content: String.fromCharCode(97 + c), span, border: border(style) };
+                const cell = { content: String.fromCharCode(97 + c), span, border: border(layout.styles) };
 
                 const room = columns.slice(c, c + span).reduce(
-                    (total, column) => total + column.width + column.marginLeft + column.marginRight, span - 1);
+                    (total, column) => total + column.width + column.marginLeft + column.marginRight,
+                    layout.inner ? span - 1 : 0);
 
                 const marginLeft = random(3);
                 const marginRight = random(3);
@@ -399,41 +472,52 @@ describe('Borders per table cell', function() {
             return cells;
         };
 
-        /* The sides of the border every cell of a row wants, and the positions
-           of the boundaries around it, as the table works them out: a cell
-           that spans columns swallows the rules between them, and the margins
-           of a cell keep the width of the columns it covers. Without the left
-           side of the outline the column of the rule at the left edge is not
-           there, so the first cell starts one character earlier */
+        /* The positions of the boundaries around every cell of a row, as the
+           table works them out: a cell that spans columns swallows the
+           dividers between them, and the margins of a cell keep the width of
+           the columns it covers. A boundary has a column of its own only where
+           the table draws a line, so without the left side of the outline the
+           first cell starts at the first character of the table */
 
-        const resolve = (cells, columns, edges) => {
-            let position = edges.left ? 0 : -1;
+        const resolve = (cells, columns, layout) => {
+            let position = layout.outline.left !== 'none' ? 0 : -1;
             let column = 0;
 
-            return cells.map((cell) => {
+            return cells.map((cell, c) => {
                 const start = position;
 
-                for (let c = column; c < column + cell.span; c++) {
-                    position += columns[c].width + columns[c].marginLeft + columns[c].marginRight + 1;
-                }
+                const total = columns.slice(column, column + cell.span).reduce(
+                    (sum, definition) => sum + definition.width + definition.marginLeft + definition.marginRight,
+                    layout.inner ? cell.span - 1 : 0);
 
+                const edge = c < cells.length - 1 ? layout.inner : layout.outline.right !== 'none';
+
+                position = start + total + (edge ? 1 : 0);
                 column += cell.span;
 
-                return { sides: sides(cell.border), start, end: position };
+                return { sides: wanted(cell.border, layout.bordered), start, end: position };
             });
         };
 
-        /* The outline of the table is a mask on the sides the cells asked for */
+        /* The style of every side of every cell: the outline at the edges of
+           the table, the border between the cells, and the style of a rule row
+           between two rows, which is single when the table has no dividers */
 
-        const mask = (rows, edges) => {
-            for (const cells of rows) {
-                cells[0].sides.left = cells[0].sides.left && edges.left;
-                cells[cells.length - 1].sides.right = cells[cells.length - 1].sides.right && edges.right;
-            }
+        const styles = (rows, layout) => {
+            for (let r = 0; r < rows.length; r++) {
+                const cells = rows[r];
 
-            for (const [cells, side] of [ [ rows[0], 'top' ], [ rows[rows.length - 1], 'bottom' ] ]) {
-                for (const cell of cells) {
-                    cell.sides[side] = cell.sides[side] && edges[side];
+                for (let c = 0; c < cells.length; c++) {
+                    const style = {
+                        top: r === 0 ? layout.outline.top : layout.rule,
+                        right: c === cells.length - 1 ? layout.outline.right : layout.border,
+                        bottom: r === rows.length - 1 ? layout.outline.bottom : layout.rule,
+                        left: c === 0 ? layout.outline.left : layout.border,
+                    };
+
+                    for (const side of Object.keys(style)) {
+                        cells[c].sides[side] = cells[c].sides[side] && style[side] !== 'none' ? style[side] : false;
+                    }
                 }
             }
 
@@ -441,18 +525,21 @@ describe('Borders per table cell', function() {
         };
 
         /* A vertical rule is drawn at a boundary when the cell on its left
-           wants its right side or the cell on its right wants its left side */
+           wants its right side or the cell on its right wants its left side,
+           in the style of that side */
 
         const rules = (cells) => {
-            const positions = new Set();
+            const positions = new Map();
 
             for (let c = 0; c < cells.length; c++) {
-                if (cells[c].sides.left || (c > 0 && cells[c - 1].sides.right)) {
-                    positions.add(cells[c].start);
+                const left = cells[c].sides.left || (c > 0 && cells[c - 1].sides.right);
+
+                if (left && cells[c].start >= 0) {
+                    positions.set(cells[c].start, left);
                 }
 
                 if (c === cells.length - 1 && cells[c].sides.right) {
-                    positions.add(cells[c].end);
+                    positions.set(cells[c].end, cells[c].sides.right);
                 }
             }
 
@@ -477,7 +564,7 @@ describe('Borders per table cell', function() {
         const segments = (above, below, width) => {
             const positions = new Set();
 
-            for (const [cells, side] of [ [ above, 'bottom' ], [ below, 'top' ] ]) {
+            for (const [ cells, side ] of [ [ above, 'bottom' ], [ below, 'top' ] ]) {
                 for (const cell of cells) {
                     if (cell.sides[side]) {
                         for (let p = Math.max(cell.start, 0); p <= Math.min(cell.end, width - 1); p++) {
@@ -490,102 +577,145 @@ describe('Borders per table cell', function() {
             return positions;
         };
 
-        it('should print every line as wide as the table, with the strokes the cells ask for', function () {
-            for (let t = 0; t < 400; t++) {
-                const count = 1 + random(4);
-                const columns = new Array(count).fill(0).map(() => ({
-                    width: 2 + random(5), marginLeft: random(3), marginRight: random(3),
-                }));
+        it('should print every line as wide as the table, with the strokes and the styles the cells ask for',
+            function () {
+                for (let t = 0; t < 400; t++) {
+                    const count = 1 + random(4);
+                    const columns = new Array(count).fill(0).map(() => ({
+                        width: 2 + random(5), marginLeft: random(3), marginRight: random(3),
+                    }));
 
-                const style = random(2) === 0 ? 'single' : 'double';
+                    const options = {
+                        border: style(),
+                        rules: random(3) === 0 ? 'all' : 'none',
+                        outline: outline(),
+                    };
 
-                const options = {
-                    border: style,
-                    rules: random(3) === 0 ? 'all' : 'none',
-                    outline: outline(style),
-                };
+                    /* The lines the table draws: the dividers between the cells
+                       in the style of the border, the frame in the style of
+                       every side of the outline, and the rule rows in the style
+                       of the border, or single when there are no dividers */
 
-                /* The columns of the outer rules are part of the width of the
-                   table only where the outline is on */
+                    const edges = sides(options.outline);
 
-                const edges = sides(options.outline);
+                    const layout = {
+                        border: options.border,
+                        outline: edges,
+                        inner: options.border !== 'none',
+                        rule: options.border === 'none' ? 'single' : options.border,
+                        styles: [ options.border, ...Object.values(edges) ].filter((value) => value !== 'none'),
+                    };
 
-                const width = columns.reduce(
-                    (total, column) => total + column.width + column.marginLeft + column.marginRight,
-                    count - 1 + (edges.left ? 1 : 0) + (edges.right ? 1 : 0));
+                    layout.bordered = layout.inner || layout.styles.length > 0;
 
-                const data = [];
+                    /* A boundary between two cells has a column of its own only
+                       when the table has a border, an outer rule only where
+                       that side of the outline is drawn */
 
-                for (let r = 0; r < 1 + random(3); r++) {
-                    data.push(row(columns, options.border));
-                }
+                    const width = columns.reduce(
+                        (total, column) => total + column.width + column.marginLeft + column.marginRight,
+                        (layout.inner ? count - 1 : 0) +
+                            (edges.left !== 'none' ? 1 : 0) + (edges.right !== 'none' ? 1 : 0));
 
-                const rows = mask(data.map((cells) => resolve(cells, columns, edges)), edges);
+                    const data = [];
 
-                /* The lines the table is expected to print: the top border,
-                   every row, a rule row between every pair of rows when the
-                   rules option asks for them, and the bottom border. A
-                   horizontal line without a single stroke on it is not printed */
+                    for (let r = 0; r < 1 + random(3); r++) {
+                        data.push(row(columns, layout));
+                    }
 
-                const expected = [];
+                    const rows = styles(data.map((cells) => resolve(cells, columns, layout)), layout);
 
-                const horizontal = (above, below) => {
-                    const covered = segments(above, below, width);
-                    const up = rules(above);
-                    const down = rules(below);
+                    /* The lines the table is expected to print: the top border,
+                       every row, a rule row between every pair of rows when the
+                       rules option asks for them, and the bottom border. A
+                       horizontal line without a single stroke on it is not
+                       printed */
 
-                    for (let p = 0; p < width; p++) {
-                        if (strokes(up.has(p), down.has(p),
-                            covered.has(p - 1) && covered.has(p), covered.has(p) && covered.has(p + 1)) !== '') {
-                            expected.push({ up, down, covered });
-                            return;
+                    const expected = [];
+
+                    const horizontal = (above, below, style) => {
+                        const covered = segments(above, below, width);
+                        const up = rules(above);
+                        const down = rules(below);
+
+                        for (let p = 0; p < width; p++) {
+                            if (strokes(up.has(p), down.has(p),
+                                covered.has(p - 1) && covered.has(p), covered.has(p) && covered.has(p + 1)) !== '') {
+                                expected.push({ up, down, covered, style });
+                                return;
+                            }
+                        }
+                    };
+
+                    horizontal([], rows[0], edges.top);
+
+                    for (let r = 0; r < rows.length; r++) {
+                        expected.push({ rules: rules(rows[r]) });
+
+                        if (options.rules === 'all' && r < rows.length - 1) {
+                            horizontal(rows[r], rows[r + 1], layout.rule);
                         }
                     }
-                };
 
-                horizontal([], rows[0]);
+                    horizontal(rows[rows.length - 1], [], edges.bottom);
 
-                for (let r = 0; r < rows.length; r++) {
-                    expected.push({ rules: rules(rows[r]) });
+                    const source = JSON.stringify({ columns, data, options });
+                    const result = print((e) => e.table(columns, data, options), { columns: 48 })
+                        .split('\n').slice(0, -1);
 
-                    if (options.rules === 'all' && r < rows.length - 1) {
-                        horizontal(rows[r], rows[r + 1]);
-                    }
-                }
+                    assert.equal(result.length, expected.length, `the number of lines of ${source}`);
 
-                horizontal(rows[rows.length - 1], []);
+                    for (let l = 0; l < result.length; l++) {
+                        const line = result[l];
 
-                const source = JSON.stringify({ columns, data, options });
-                const result = print((e) => e.table(columns, data, options), { columns: 48 })
-                    .split('\n').slice(0, -1);
+                        assert.equal(line.length, width, `the width of line "${line}" of ${source}`);
 
-                assert.equal(result.length, expected.length, `the number of lines of ${source}`);
+                        for (let p = 0; p < width; p++) {
+                            const message = `position ${p} of line "${line}" of ${source}`;
 
-                for (let l = 0; l < result.length; l++) {
-                    const line = result[l];
+                            /* A row has a vertical rule, or a space, at every
+                               boundary and its contents everywhere else */
 
-                    assert.equal(line.length, width, `the width of line "${line}" of ${source}`);
+                            if (typeof expected[l].rules !== 'undefined') {
+                                const rule = expected[l].rules.get(p) || null;
+                                const glyph = GLYPH.get(line[p]);
 
-                    for (let p = 0; p < width; p++) {
-                        const message = `position ${p} of line "${line}" of ${source}`;
+                                assert.equal(typeof glyph !== 'undefined' && glyph.strokes === 'ud' ?
+                                    glyph.vertical : null, rule, `the rule at ${message}`);
 
-                        /* A row has a vertical rule, or a space, at every
-                           boundary and its contents everywhere else */
+                                continue;
+                            }
 
-                        if (typeof expected[l].rules !== 'undefined') {
-                            assert.equal(STROKES[line[p]] === 'ud', expected[l].rules.has(p), `rule at ${message}`);
-                            continue;
+                            const covered = expected[l].covered;
+                            const up = expected[l].up.get(p);
+                            const down = expected[l].down.get(p);
+
+                            /* Every junction has one style per axis: a vertical
+                               rule that runs through a horizontal line has the
+                               same style above and below it */
+
+                            if (up && down) {
+                                assert.equal(up, down, `the style of the rule at ${message}`);
+                            }
+
+                            const expects = strokes(
+                                expected[l].up.has(p), expected[l].down.has(p),
+                                covered.has(p - 1) && covered.has(p), covered.has(p) && covered.has(p + 1),
+                            );
+
+                            const glyph = GLYPH.get(line[p]);
+
+                            assert.isDefined(glyph, `the glyph at ${message}`);
+                            assert.equal(glyph.strokes, expects, `the strokes at ${message}`);
+
+                            assert.equal(glyph.horizontal, /[lr]/.test(expects) ? expected[l].style : null,
+                                `the horizontal style at ${message}`);
+
+                            assert.equal(glyph.vertical, /[ud]/.test(expects) ? up || down : null,
+                                `the vertical style at ${message}`);
                         }
-
-                        const covered = expected[l].covered;
-
-                        assert.equal(STROKES[line[p]], strokes(
-                            expected[l].up.has(p), expected[l].down.has(p),
-                            covered.has(p - 1) && covered.has(p), covered.has(p) && covered.has(p + 1),
-                        ), `the strokes at ${message}`);
                     }
                 }
-            }
-        });
+            });
     });
 });

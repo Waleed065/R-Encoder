@@ -483,7 +483,7 @@ describe('Markdown', function() {
         it('should print a heading, a paragraph and a rule inside a box', function () {
             assert.equal(
                 print((encoder) => encoder.box(
-                    { width: 24, border: 'single', paddingLeft: 1, paddingRight: 1 },
+                    { width: 24, outline: 'single', paddingLeft: 1, paddingRight: 1 },
                     (box) => box.markdown('## Title\nSome text here\n\n---'))),
                 lines(
                     '┌' + '─'.repeat(22) + '┐',
@@ -529,7 +529,7 @@ describe('Markdown', function() {
                 print((encoder) => encoder.table(
                     [ { width: 18 }, { width: 18 } ],
                     [ [ (cell) => cell.markdown('**bold**\n- item'), 'plain' ] ],
-                    { border: 'single' })),
+                    { outline: 'single', border: 'single' })),
                 lines(
                     '┌' + '─'.repeat(18) + '┬' + '─'.repeat(18) + '┐',
                     '│' + 'bold'.padEnd(18) + '│' + 'plain'.padEnd(18) + '│',

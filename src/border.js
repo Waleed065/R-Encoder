@@ -2,7 +2,14 @@ import CodepageEncoder from '@point-of-sale/codepage-encoder';
 
 /* The eleven shapes a border is drawn with, named after the edge of the box
    or table they sit on: the four corners, the four junctions on an edge, the
-   junction in the middle and the two straight lines */
+   junction in the middle and the two straight lines.
+
+   Every shape exists for each combination of the style of the horizontal line
+   that runs through it and the style of the vertical line that runs through
+   it, because the frame of a table and the lines between its cells have a
+   style of their own. The two pure sets are the box drawing glyphs of a single
+   and of a double line, the two mixed sets are the glyphs of cp437 that join a
+   single line to a double one */
 
 const SINGLE = {
   horizontal: '─',
@@ -30,6 +37,45 @@ const DOUBLE = {
   top: '╦',
   bottom: '╩',
   middle: '╬',
+};
+
+/* A double horizontal line crossing single vertical rules */
+
+const DOUBLE_HORIZONTAL = {
+  horizontal: '═',
+  vertical: '│',
+  topLeft: '╒',
+  topRight: '╕',
+  bottomLeft: '╘',
+  bottomRight: '╛',
+  left: '╞',
+  right: '╡',
+  top: '╤',
+  bottom: '╧',
+  middle: '╪',
+};
+
+/* A single horizontal line crossing double vertical rules */
+
+const DOUBLE_VERTICAL = {
+  horizontal: '─',
+  vertical: '║',
+  topLeft: '╓',
+  topRight: '╖',
+  bottomLeft: '╙',
+  bottomRight: '╜',
+  left: '╟',
+  right: '╢',
+  top: '╥',
+  bottom: '╨',
+  middle: '╫',
+};
+
+/* The set of shapes for every combination of a horizontal and a vertical style */
+
+const SHAPES = {
+  single: {single: SINGLE, double: DOUBLE_VERTICAL},
+  double: {single: DOUBLE_HORIZONTAL, double: DOUBLE},
 };
 
 const ROUNDED = {
@@ -74,6 +120,10 @@ const MISSING = 0x3f;
  * the printer, so it is looked up once for every encoder and the straight lines
  * stay in cp437 when the page that has the corners does not have them.
  *
+ * Everything with a double line in it, the junctions of a double line and a
+ * single one included, is drawn from the page that has the double glyphs, which
+ * is cp437 on every printer the encoder knows.
+ *
  * A printer without a page with rounded corners silently draws square corners,
  * and a printer without a page with the line drawing glyphs at all draws its
  * borders in ASCII, with dashes, bars and plus signs.
@@ -97,8 +147,9 @@ class Border {
        knows has cp437, a mapping without it falls back to a page that has
        the glyphs, and to its first page when it has none of them */
 
-    this.#single = Border.#page(codepages, SINGLE);
-    this.#double = Border.#page(codepages, DOUBLE);
+    this.#single = Border.#page(codepages, Object.values(SINGLE).join(''));
+    this.#double = Border.#page(codepages, [DOUBLE, DOUBLE_HORIZONTAL, DOUBLE_VERTICAL]
+        .map((shapes) => Object.values(shapes).join('')).join(''));
     this.#fallback = codepages[0] || DEFAULT_CODEPAGE;
 
     /* The first page that has the rounded corners is used for the corners, a
@@ -128,15 +179,13 @@ class Border {
      * glyph, or null when the printer has none of them
      *
      * @param  {string[]}   codepages   The code pages of the mapping
-     * @param  {object}     shapes      The glyphs that have to be encoded
+     * @param  {string}     glyphs      The glyphs that have to be encoded
      * @return {string|null}            The name of the code page, or null
      */
-  static #page(codepages, shapes) {
+  static #page(codepages, glyphs) {
     if (codepages.includes(DEFAULT_CODEPAGE)) {
       return DEFAULT_CODEPAGE;
     }
-
-    const glyphs = Object.values(shapes).join('');
 
     return codepages.find((codepage) => Border.#encodes(codepage, glyphs)) || null;
   }
@@ -161,14 +210,27 @@ class Border {
   }
 
   /**
-     * Get the glyph and the code page for every shape of a border
+     * Get the glyph and the code page for every shape of a border, for one
+     * combination of the style of the horizontal line and the style of the
+     * vertical line that meet in it. A box and the outline of a table use the
+     * same style on both axes, a junction of the frame of a table and a rule
+     * row between its cells can have one style per axis
      *
-     * @param  {string}   style     The style of the border, 'single' or 'double'
-     * @param  {string}   [corners] The style of the corners, 'square' or 'rounded'
-     * @return {object}             An object with a glyph and a codepage for every shape
+     * @param  {string}   horizontal   The style of the horizontal line, 'single' or 'double'
+     * @param  {string}   vertical     The style of the vertical line, 'single' or 'double'
+     * @param  {string}   [corners]    The style of the corners, 'square' or 'rounded'
+     * @return {object}                An object with a glyph and a codepage for every shape
      */
-  glyphs(style, corners) {
-    const straight = style === 'double' ? this.#double : this.#single;
+  glyphs(horizontal, vertical, corners) {
+    const across = horizontal === 'double' ? 'double' : 'single';
+    const down = vertical === 'double' ? 'double' : 'single';
+
+    /* Anything with a double line in it is drawn from the page that has the
+       double glyphs, the lines that are single everywhere from the page that
+       has the single ones */
+
+    const double = across === 'double' || down === 'double';
+    const straight = double ? this.#double : this.#single;
 
     /* A printer that cannot draw the lines draws the whole border in ASCII */
 
@@ -177,8 +239,8 @@ class Border {
           .map(([name, glyph]) => [name, {glyph, codepage: this.#fallback}]));
     }
 
-    const rounded = style !== 'double' && corners === 'rounded' && this.#corners !== null;
-    const shapes = Object.assign({}, style === 'double' ? DOUBLE : SINGLE, rounded ? ROUNDED : {});
+    const rounded = !double && corners === 'rounded' && this.#corners !== null;
+    const shapes = Object.assign({}, SHAPES[across][down], rounded ? ROUNDED : {});
 
     const result = {};
 

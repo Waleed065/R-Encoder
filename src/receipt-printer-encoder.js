@@ -89,9 +89,9 @@ import printerDefinitions from '../generated/printers.js';
 
 /**
  * @typedef {Object} BoxOptions
- * @property {'single' | 'double' | 'none'} [border]
+ * @property {'single' | 'double' | 'none'} [outline]
  * @property {'square' | 'rounded'} [corners]
- * @property {'single' | 'double' | 'none'} [style]   Deprecated alias for border
+ * @property {'single' | 'double' | 'none'} [style]   Deprecated alias for outline
  * @property {number} [width]
  * @property {Alignment} [align]
  * @property {number} [marginLeft]
@@ -154,6 +154,14 @@ import printerDefinitions from '../generated/printers.js';
  */
 
 /**
+ * @typedef {Object} TableOutline
+ * @property {'none' | 'single' | 'double'} [top]
+ * @property {'none' | 'single' | 'double'} [right]
+ * @property {'none' | 'single' | 'double'} [bottom]
+ * @property {'none' | 'single' | 'double'} [left]
+ */
+
+/**
  * @typedef {Object} TableCellObject
  * @property {number} [span]
  * @property {TableCellContent} [content]
@@ -174,7 +182,7 @@ import printerDefinitions from '../generated/printers.js';
  * @property {'none' | 'single' | 'double'} [border]
  * @property {'square' | 'rounded'} [corners]
  * @property {'none' | 'all'} [rules]
- * @property {'none' | 'single' | 'double' | TableCellBorder} [outline]
+ * @property {'none' | 'single' | 'double' | TableOutline} [outline]
  * @property {number} [width]
  */
 /** @typedef {string | ((encoder: ReceiptPrinterEncoder) => void)} BoxContent */
@@ -834,12 +842,15 @@ class ReceiptPrinterEncoder {
      *                                        The first parameter of the callback is the encoder
      *                                        object on which the function can call its methods.
      * @param  {TableOptions}      [options]  An object with the following properties:
-     *                                        - border: The style of the border, either none, single or double
-     *                                        - corners: The style of the corners, either square or rounded
+     *                                        - outline: The style of the frame around the table, either none,
+     *                                          single or double, or an object with any of top, right, bottom
+     *                                          and left set to one of those, the sides that are left out
+     *                                          being none
+     *                                        - border: The style of the lines between the cells, the vertical
+     *                                          dividers and the rule rows, either none, single or double
+     *                                        - corners: The style of the corners of a single outline, either
+     *                                          square or rounded
      *                                        - rules: A rule between every pair of rows, either none or all
-     *                                        - outline: The border around the whole table, which can be turned
-     *                                          off, either entirely with none, or per side with an object with
-     *                                          any of top, right, bottom and left set to none
      *                                        - width: The width of the table, by default the width of the paper
      * @return {ReceiptPrinterEncoder}                   Return the object, for easy chaining commands
      *
@@ -873,42 +884,67 @@ class ReceiptPrinterEncoder {
       }
     }
 
-    const bordered = options.border !== 'none';
-
-    /* The sides of the border around the whole table that are drawn. The
-       columns of the outer rules are part of the width of the table only
-       where the outline is on */
+    /* The frame around the table and the lines between its cells are two
+       independent styles: the outline is the style of every side of the frame,
+       the border the style of the vertical dividers and of the rule rows */
 
     const outline = ReceiptPrinterEncoder.#resolveOutline(options);
 
-    columns = this.#resolveColumns(columns, options.width, bordered, outline);
+    /* A divider between two cells has a column of its own when the table has a
+       border, an outer rule when that side of the outline is drawn */
+
+    const inner = options.border !== 'none';
+    const bordered = inner || Object.values(outline).some((style) => style !== 'none');
+    const layout = {inner, bordered, outline, styles: ReceiptPrinterEncoder.#tableStyles(options, outline)};
+
+    columns = this.#resolveColumns(columns, options.width, inner, outline);
 
     /* The width of the table in characters of the current size: the columns,
-       their margins and, with a border, one character for every vertical rule
-       between two cells and for every side of the outline that is drawn */
+       their margins, one character for every vertical divider between two
+       cells and one for the left and for the right side of the outline where
+       those are drawn */
 
     const width = columns.reduce(
         (total, column) => total + column.width + (column.marginLeft || 0) + (column.marginRight || 0),
-        bordered ? columns.length - 1 + (outline.left ? 1 : 0) + (outline.right ? 1 : 0) : 0,
+        (inner ? columns.length - 1 : 0) +
+          (outline.left !== 'none' ? 1 : 0) + (outline.right !== 'none' ? 1 : 0),
     );
 
     /* The cells of every row with their spans applied, and null for a rule row */
 
-    const rows = this.#resolveRows(columns, data, options, bordered);
+    const rows = this.#resolveRows(columns, data, options, layout);
 
-    /* The outline is a mask on the borders the cells asked for */
+    /* The style of every side of every cell: the outline at the edges of the
+       table, the border between the cells, and none where a cell turned its
+       own side off */
 
     if (bordered) {
-      ReceiptPrinterEncoder.#applyOutline(rows, outline);
+      ReceiptPrinterEncoder.#applyStyles(rows, outline, options.border);
     }
 
-    /* The glyphs of the border, which a table without a border and without a
-       rule row does not need. The rule rows of a table without a border are
-       drawn with the single line glyphs */
+    /* The glyphs of the border, per combination of the style of the horizontal
+       and of the vertical line that meet in a junction, looked up once */
 
-    const elements = bordered || rows.includes(null) ?
-      this.#borders().glyphs(bordered ? options.border : 'single', options.corners) :
-      null;
+    const cache = new Map();
+
+    /* A corner is rounded only when both of the sides that meet in it are
+       single, so the option has no effect on a table without such a corner */
+
+    const corners = options.corners === 'rounded' &&
+      [['top', 'left'], ['top', 'right'], ['bottom', 'left'], ['bottom', 'right']]
+          .some(([across, down]) => outline[across] === 'single' && outline[down] === 'single') ?
+      'rounded' :
+      'square';
+
+    const glyphs = (horizontal, vertical) => {
+      const key = `${horizontal}/${vertical}`;
+
+      if (!cache.has(key)) {
+        cache.set(key, this.#borders().glyphs(horizontal, vertical, corners));
+      }
+
+      return cache.get(key);
+    };
 
     this.#composer.flush();
 
@@ -924,60 +960,86 @@ class ReceiptPrinterEncoder {
 
     /* The bottom border of the table, which is blank when no cell of the last
        row wants its bottom side. It is worked out before the rows are printed,
-       because a table without a bottom border has no line to restore the line
-       spacing on, so its last row does that itself */
+       because a table without a bottom border has no line of its own to restore
+       the line spacing on, so the last line it prints does that instead */
 
     const last = rows[rows.length - 1];
 
+    /* A rule row is drawn in the style of the border, and with single lines
+       when the table has no dividers between its cells */
+
+    const rule = options.border === 'none' ? 'single' : options.border;
+
     const bottom = bordered ? ReceiptPrinterEncoder.#tableShapes(width,
-        ReceiptPrinterEncoder.#tableRules(last, outline), new Set(),
-        ReceiptPrinterEncoder.#tableSegments(last, [], outline, width)) : null;
+        ReceiptPrinterEncoder.#tableRules(last ?? [], layout), new Map(),
+        ReceiptPrinterEncoder.#tableSegments(last ?? [], [], layout, width), outline.bottom) : null;
+
+    /* The shape of the line of a rule row, which follows from the rows around
+       it. A neighbour that is not there simply has no vertical rules */
+
+    const shapes = (r) => ReceiptPrinterEncoder.#tableShapes(width,
+        ReceiptPrinterEncoder.#tableRules(rows[r - 1] ?? [], layout),
+        ReceiptPrinterEncoder.#tableRules(rows[r + 1] ?? [], layout),
+        ReceiptPrinterEncoder.#tableSegments(rows[r - 1] ?? [], rows[r + 1] ?? [], layout, width), rule);
+
+    /* A table whose bottom border is blank restores the line spacing on the
+       last line it prints itself, which is its last row, or a rule row below
+       that row when the outline leaves the bottom out and the rule is drawn */
+
+    let restore = -1;
+
+    if (bordered && bottom === null) {
+      for (let r = rows.length - 1; r >= 0; r--) {
+        if (rows[r] !== null || shapes(r) !== null) {
+          restore = r;
+          break;
+        }
+      }
+    }
 
     if (bordered) {
       this.#setLineSpacing('none');
 
-      this.#tableBorder(elements, ReceiptPrinterEncoder.#tableShapes(width,
-          new Set(), ReceiptPrinterEncoder.#tableRules(rows[0], outline),
-          ReceiptPrinterEncoder.#tableSegments([], rows[0], outline, width)));
+      this.#tableBorder(glyphs, ReceiptPrinterEncoder.#tableShapes(width,
+          new Map(), ReceiptPrinterEncoder.#tableRules(rows[0] ?? [], layout),
+          ReceiptPrinterEncoder.#tableSegments([], rows[0] ?? [], layout, width), outline.top));
 
       this.#composer.flush();
     }
 
     for (let r = 0; r < rows.length; r++) {
       if (rows[r] !== null) {
-        this.#tableRow(rows[r], elements, bordered, outline, previous,
-            bordered && bottom === null && r === rows.length - 1);
+        this.#tableRow(rows[r], glyphs, layout, previous, r === restore);
 
         continue;
       }
 
-      /* A rule row of a table without a border is a horizontal line over the
+      /* A rule row of a table without any lines is a horizontal line over the
          whole width of the table */
 
       if (!bordered) {
-        this.#composer.text(elements.horizontal.glyph.repeat(width), elements.horizontal.codepage);
+        const element = glyphs(rule, rule).horizontal;
+
+        this.#composer.text(element.glyph.repeat(width), element.codepage);
         this.#composer.flush();
 
         continue;
       }
 
-      /* A rule row always has a row above and a row below it, the rules that
-         would double up with a border are dropped, but a neighbour that is
-         not there simply has no vertical rules */
+      this.#tableBorder(glyphs, shapes(r));
 
-      const above = rows[r - 1] ?? [];
-      const below = rows[r + 1] ?? [];
+      /* A rule row at the end of a table without a bottom border is the last
+         line the table prints, so it restores the line spacing */
 
-      this.#tableBorder(elements, ReceiptPrinterEncoder.#tableShapes(width,
-          ReceiptPrinterEncoder.#tableRules(above, outline),
-          ReceiptPrinterEncoder.#tableRules(below, outline),
-          ReceiptPrinterEncoder.#tableSegments(above, below, outline, width)));
+      if (r === restore) {
+        this.#setLineSpacing(previous);
+      }
 
       this.#composer.flush();
     }
 
     if (bordered) {
-      this.#tableBorder(elements, bottom);
+      this.#tableBorder(glyphs, bottom);
 
       /* Restore the line spacing before the line feed of the bottom border,
          so that the paper is fed as usual after the table */
@@ -996,24 +1058,26 @@ class ReceiptPrinterEncoder {
      * Resolve the rows of a table: the cells of every row with their spans
      * applied, and null for every rule row. With rules set to all a rule row
      * is inserted between every pair of rows. A rule row that would double up
-     * with a line that is already there, directly after the top border,
-     * directly before the bottom border or directly after another rule row,
-     * is dropped.
+     * with a line that is already there is dropped: directly after another
+     * rule row, directly after the top border when the top side of the outline
+     * is drawn, and directly before the bottom border when the bottom side is.
+     * Without those sides there is no line it doubles up with, so a rule row
+     * above the first row or below the last one is kept and drawn.
      *
      * @param  {TableColumn[]}   columns    The column definitions, with numeric widths
      * @param  {TableRow[]}      data       The rows of the table
      * @param  {TableOptions}    options    The options of the table
-     * @param  {boolean}         bordered   True when the table has a border
+     * @param  {object}          layout     The styles and the rule columns of the table
      * @return {Array}                      The rows, null for a rule row
      */
-  #resolveRows(columns, data, options, bordered) {
+  #resolveRows(columns, data, options, layout) {
     const rows = [];
 
     for (let r = 0; r < data.length; r++) {
       let cells = null;
 
       if (Array.isArray(data[r])) {
-        cells = this.#resolveCells(columns, data[r], r, options);
+        cells = this.#resolveCells(columns, data[r], r, layout);
       } else if (typeof data[r] !== 'object' || data[r] === null || data[r].rule !== true) {
         throw new Error('A row must be an array of cells, or an object with rule set to true');
       }
@@ -1026,17 +1090,24 @@ class ReceiptPrinterEncoder {
         rows.push(null);
       }
 
-      if (cells === null && (last === null || (bordered && rows.length === 0))) {
+      if (cells === null && (last === null || (layout.outline.top !== 'none' && rows.length === 0))) {
         continue;
       }
 
       rows.push(cells);
     }
 
-    /* A rule row at the end of a bordered table doubles up with the bottom border */
+    /* A rule row at the end of a table doubles up with its bottom border */
 
-    while (bordered && rows.length > 0 && rows[rows.length - 1] === null) {
+    while (layout.outline.bottom !== 'none' && rows.length > 0 && rows[rows.length - 1] === null) {
       rows.pop();
+    }
+
+    /* A rule row has no cells of its own, so a table that draws its lines from
+       the cells has nothing to draw when every one of its rows is a rule row */
+
+    if (layout.bordered && rows.every((cells) => cells === null)) {
+      return [];
     }
 
     return rows;
@@ -1052,13 +1123,13 @@ class ReceiptPrinterEncoder {
      * @param  {TableColumn[]}   columns    The column definitions, with numeric widths
      * @param  {TableCell[]}     row        The cells of the row
      * @param  {number}          index      The position of the row in the data
-     * @param  {TableOptions}    options    The options of the table
+     * @param  {object}          layout     The styles and the rule columns of the table
      * @return {object[]}                   The cells of the row, with their widths and margins
      */
-  #resolveCells(columns, row, index, options) {
+  #resolveCells(columns, row, index, layout) {
     if (!row.some(ReceiptPrinterEncoder.#isCellObject)) {
       return columns.map((column, c) =>
-        ReceiptPrinterEncoder.#resolveCell([column], row[c], options, index));
+        ReceiptPrinterEncoder.#resolveCell([column], row[c], layout, index));
     }
 
     const cells = [];
@@ -1076,7 +1147,7 @@ class ReceiptPrinterEncoder {
         throw new Error(`The spans of row ${index + 1} do not add up to the number of columns`);
       }
 
-      cells.push(ReceiptPrinterEncoder.#resolveCell(columns.slice(position, position + span), cell, options, index));
+      cells.push(ReceiptPrinterEncoder.#resolveCell(columns.slice(position, position + span), cell, layout, index));
 
       position += span;
     }
@@ -1098,17 +1169,16 @@ class ReceiptPrinterEncoder {
      *
      * @param  {TableColumn[]}   covered    The columns the cell covers
      * @param  {TableCell}       cell       The contents of the cell
-     * @param  {TableOptions}    options    The options of the table
+     * @param  {object}          layout     The styles and the rule columns of the table
      * @param  {number}          index      The position of the row in the data
      * @return {object}                     The cell, with its width, margins and border
      */
-  static #resolveCell(covered, cell, options, index) {
+  static #resolveCell(covered, cell, layout, index) {
     const object = ReceiptPrinterEncoder.#isCellObject(cell);
-    const bordered = options.border !== 'none';
 
-    /* The vertical rules the cell swallows are part of its width */
+    /* The vertical dividers the cell swallows are part of its width */
 
-    let width = bordered ? covered.length - 1 : 0;
+    let width = layout.inner ? covered.length - 1 : 0;
 
     for (let i = 0; i < covered.length; i++) {
       width += covered[i].width;
@@ -1146,7 +1216,7 @@ class ReceiptPrinterEncoder {
       verticalAlign: first.verticalAlign,
       overflow: first.overflow,
       content: object ? cell.content : cell,
-      border: ReceiptPrinterEncoder.#resolveBorder(cell, options, index),
+      border: ReceiptPrinterEncoder.#resolveBorder(cell, layout, index),
     };
   }
 
@@ -1175,60 +1245,124 @@ class ReceiptPrinterEncoder {
 
   /**
      * Resolve the sides of the border a cell of a table wants. A plain cell
-     * wants the border of the table on every side, the object form can turn it
-     * off, entirely with 'none' or per side. A table without a border ignores
-     * the property
+     * wants the lines of the table on every side, the object form can turn
+     * them off, entirely with 'none' or per side. A table without any lines
+     * ignores the property
      *
      * @param  {TableCell}       cell       The contents of the cell
-     * @param  {TableOptions}    options    The options of the table
+     * @param  {object}          layout     The styles and the rule columns of the table
      * @param  {number}          index      The position of the row in the data
      * @return {object}                     True for every side the cell wants
      */
-  static #resolveBorder(cell, options, index) {
-    if (options.border === 'none' || !ReceiptPrinterEncoder.#isCellObject(cell) ||
+  static #resolveBorder(cell, layout, index) {
+    if (!layout.bordered || !ReceiptPrinterEncoder.#isCellObject(cell) ||
         typeof cell.border === 'undefined') {
       return {top: true, right: true, bottom: true, left: true};
     }
 
-    return ReceiptPrinterEncoder.#resolveSides(cell.border, options.border,
+    return ReceiptPrinterEncoder.#resolveSides(cell.border, layout.styles,
         `A cell of row ${index + 1} can only turn its border off`);
   }
 
   /**
-     * Resolve the sides of the border around the whole table, which the
-     * outline option can turn off. The outline is drawn on every side by
-     * default, and a table without a border ignores the option
+     * The line styles a table draws with, which are the ones a cell may name
+     * in its own border property: the style of the dividers between the cells
+     * and the styles of the sides of the outline
      *
      * @param  {TableOptions}   options   The options of the table
-     * @return {object}                   True for every side of the outline that is drawn
+     * @param  {object}         outline   The style of every side of the outline
+     * @return {string[]}                 The styles the table draws with
      */
-  static #resolveOutline(options) {
-    if (options.border === 'none' || typeof options.outline === 'undefined') {
-      return {top: true, right: true, bottom: true, left: true};
-    }
-
-    return ReceiptPrinterEncoder.#resolveSides(options.outline, options.border,
-        'The outline of a table can only be turned off');
+  static #tableStyles(options, outline) {
+    return [...new Set([options.border, ...Object.values(outline)])].filter((style) => style !== 'none');
   }
 
   /**
-     * Resolve the sides of a border, of a cell or of the outline of a table,
-     * from a value that is either a style for every side, or an object with
-     * any of top, right, bottom and left, where a side that is left out keeps
-     * the style of the table. A border can only be turned off: any other
-     * value, the other line style included, throws, because single and double
-     * lines cannot be joined on every printer
+     * Resolve the style of every side of the outline of a table, from a value
+     * that is either a style for every side, or an object with any of top,
+     * right, bottom and left, where a side that is left out is not drawn. A
+     * table without an outline option has no frame around it
+     *
+     * @param  {TableOptions}   options   The options of the table
+     * @return {object}                   The style of every side of the outline
+     */
+  static #resolveOutline(options) {
+    const sides = {top: 'none', right: 'none', bottom: 'none', left: 'none'};
+    const value = options.outline;
+    const styles = ['none', 'single', 'double'];
+
+    if (typeof value === 'undefined') {
+      return sides;
+    }
+
+    if (typeof value === 'string') {
+      if (!styles.includes(value)) {
+        throw new Error('Unknown outline style');
+      }
+
+      for (const side of Object.keys(sides)) {
+        sides[side] = value;
+      }
+
+      return sides;
+    }
+
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Unknown outline style');
+    }
+
+    ReceiptPrinterEncoder.#validateSides(value, sides, 'Unknown outline side');
+
+    for (const side of Object.keys(sides)) {
+      if (typeof value[side] === 'undefined') {
+        continue;
+      }
+
+      if (!styles.includes(value[side])) {
+        throw new Error('Unknown outline style');
+      }
+
+      sides[side] = value[side];
+    }
+
+    return sides;
+  }
+
+  /**
+     * Check the keys of the object form of an outline or of the border of a
+     * cell, which are the four sides of a border. Anything else is a typo that
+     * would silently leave a side out
+     *
+     * @param  {object}   value     The value of the property
+     * @param  {object}   sides     The sides a border has
+     * @param  {string}   message   The message to throw for a key that is not a side
+     */
+  static #validateSides(value, sides, message) {
+    for (const key of Object.keys(value)) {
+      if (!(key in sides)) {
+        throw new Error(`${message} ${key}`);
+      }
+    }
+  }
+
+  /**
+     * Resolve the sides of the border of a cell, from a value that is either
+     * a style for every side, or an object with any of top, right, bottom and
+     * left, where a side that is left out keeps the line of the table. A cell
+     * can only turn its border off: any other value, a style the table does
+     * not draw with included, throws, because the lines of a cell are the
+     * lines of the table around it
      *
      * @param  {'none' | 'single' | 'double' | TableCellBorder}   value     The value of the property
-     * @param  {string}   style     The border style of the table, which is accepted as a no-op
+     * @param  {string[]} styles    The styles the table draws with, which are accepted as a no-op
      * @param  {string}   message   The message to throw for a value that is not allowed
      * @return {object}             True for every side that is drawn
      */
-  static #resolveSides(value, style, message) {
+  static #resolveSides(value, styles, message) {
     const sides = {top: true, right: true, bottom: true, left: true};
 
     if (typeof value === 'string') {
-      if (value !== 'none' && value !== style) {
+      if (value !== 'none' && !styles.includes(value)) {
         throw new Error(message);
       }
 
@@ -1243,12 +1377,14 @@ class ReceiptPrinterEncoder {
       throw new Error(message);
     }
 
+    ReceiptPrinterEncoder.#validateSides(value, sides, 'Unknown border side');
+
     for (const side of Object.keys(sides)) {
       if (typeof value[side] === 'undefined') {
         continue;
       }
 
-      if (value[side] !== 'none' && value[side] !== style) {
+      if (value[side] !== 'none' && !styles.includes(value[side])) {
         throw new Error(message);
       }
 
@@ -1259,40 +1395,43 @@ class ReceiptPrinterEncoder {
   }
 
   /**
-     * Apply the outline of a table as a mask on the borders its cells asked
-     * for: the top side of the cells of the first row, the bottom side of the
-     * cells of the last row, the left side of the first cell of every row and
-     * the right side of the last cell of every row are cleared where the
-     * outline is off. A rule row has no cells of its own, the lines it draws
-     * follow from the rows around it
+     * Apply the styles of the table to the sides its cells asked for: the top
+     * side of the cells of the first row, the bottom side of the cells of the
+     * last row, the left side of the first cell of every row and the right
+     * side of the last cell of every row are drawn in the style of that side
+     * of the outline, every side between two cells in the style of the border.
+     * A side of a cell is the style of the line there, or false where the cell
+     * turned it off or the table does not draw a line there. A rule row has no
+     * cells of its own, the lines it draws follow from the rows around it, so
+     * the horizontal sides of a row with a neighbour above or below it are the
+     * style of a rule row, which is drawn even when the table has no dividers
+     * between its cells
      *
      * @param  {Array}    rows      The rows of the table, null for a rule row
-     * @param  {object}   outline   True for every side of the outline that is drawn
+     * @param  {object}   outline   The style of every side of the outline
+     * @param  {string}   border    The style of the lines between the cells
      */
-  static #applyOutline(rows, outline) {
-    const printed = rows.filter((row) => row !== null);
+  static #applyStyles(rows, outline, border) {
+    const rule = border === 'none' ? 'single' : border;
 
-    if (printed.length === 0) {
-      return;
-    }
+    for (let r = 0; r < rows.length; r++) {
+      const cells = rows[r];
 
-    for (const cells of printed) {
-      if (!outline.left) {
-        cells[0].border.left = false;
-      }
-
-      if (!outline.right) {
-        cells[cells.length - 1].border.right = false;
-      }
-    }
-
-    for (const [cells, side] of [[printed[0], 'top'], [printed[printed.length - 1], 'bottom']]) {
-      if (outline[side]) {
+      if (cells === null) {
         continue;
       }
 
-      for (const cell of cells) {
-        cell.border[side] = false;
+      for (let c = 0; c < cells.length; c++) {
+        const styles = {
+          top: r === 0 ? outline.top : rule,
+          right: c === cells.length - 1 ? outline.right : border,
+          bottom: r === rows.length - 1 ? outline.bottom : rule,
+          left: c === 0 ? outline.left : border,
+        };
+
+        for (const side of Object.keys(styles)) {
+          cells[c].border[side] = cells[c].border[side] && styles[side] !== 'none' ? styles[side] : false;
+        }
       }
     }
   }
@@ -1311,21 +1450,22 @@ class ReceiptPrinterEncoder {
   }
 
   /**
-     * Whether a vertical rule is drawn at every boundary of one row of a
+     * The style of the vertical rule at every boundary of one row of a
      * bordered table: the left edge of the table, every boundary between two
      * cells and the right edge, which is one more than the number of cells. A
      * rule is drawn when the cell on its left wants its right side or the cell
-     * on its right wants its left side, and at the edges when the cell there
-     * wants that side. A cell that spans columns has no boundary inside it
+     * on its right wants its left side, in the style of that side, which is
+     * the style of the outline at the edges and the style of the border
+     * between two cells. A cell that spans columns has no boundary inside it
      *
      * @param  {object[]}   cells   The cells of the row
-     * @return {boolean[]}          True for every boundary with a vertical rule
+     * @return {Array}              The style of every boundary with a vertical rule, false for the others
      */
   static #tableEdges(cells) {
     const edges = [];
 
     for (let c = 0; c <= cells.length; c++) {
-      edges.push((c > 0 && cells[c - 1].border.right) || (c < cells.length && cells[c].border.left));
+      edges.push((c > 0 && cells[c - 1].border.right) || (c < cells.length && cells[c].border.left) || false);
     }
 
     return edges;
@@ -1333,34 +1473,52 @@ class ReceiptPrinterEncoder {
 
   /**
      * The positions of the vertical rules of one row of a bordered table, the
-     * boundaries of #tableEdges() that are drawn. A row without cells, which
-     * is a neighbour of a rule row that is not there, has none. The outer
-     * rules have a column of their own only where the outline is on, so
-     * without the left side of the outline the first cell starts at the first
-     * character of the table
+     * boundaries of #tableEdges() that are drawn, with the style of each. A
+     * row without cells, which is a neighbour of a rule row that is not there,
+     * has none. A boundary between two cells has a column of its own only when
+     * the table has a border, an outer rule only when that side of the outline
+     * is drawn, so without the left side of the outline the first cell starts
+     * at the first character of the table
      *
-     * @param  {object[]}   cells     The cells of the row
-     * @param  {object}     outline   True for every side of the outline that is drawn
-     * @return {Set}                  The character positions of the vertical rules
+     * @param  {object[]}   cells    The cells of the row
+     * @param  {object}     layout   The styles and the rule columns of the table
+     * @return {Map}                 The style of the vertical rule at every position that has one
      */
-  static #tableRules(cells, outline) {
+  static #tableRules(cells, layout) {
     const edges = ReceiptPrinterEncoder.#tableEdges(cells);
-    const positions = new Set();
-    let position = outline.left ? 0 : -1;
+    const positions = new Map();
+    let position = layout.outline.left !== 'none' ? 0 : -1;
 
     for (let c = 0; c < cells.length; c++) {
-      if (edges[c] && position >= 0) {
-        positions.add(position);
+      const column = c === 0 ? layout.outline.left !== 'none' : layout.inner;
+
+      if (column && edges[c]) {
+        positions.set(position, edges[c]);
       }
 
-      position += 1 + cells[c].marginLeft + cells[c].width + cells[c].marginRight;
+      position += cells[c].marginLeft + cells[c].width + cells[c].marginRight +
+        (ReceiptPrinterEncoder.#tableColumn(cells, c, layout) ? 1 : 0);
     }
 
-    if (cells.length > 0 && edges[cells.length] && outline.right) {
-      positions.add(position);
+    if (cells.length > 0 && layout.outline.right !== 'none' && edges[cells.length]) {
+      positions.set(position, edges[cells.length]);
     }
 
     return positions;
+  }
+
+  /**
+     * Whether the boundary on the right of one cell of a row has a column of
+     * its own: a boundary between two cells only when the table has a border,
+     * the right edge of the table only when that side of the outline is drawn
+     *
+     * @param  {object[]}   cells    The cells of the row
+     * @param  {number}     c        The position of the cell in the row
+     * @param  {object}     layout   The styles and the rule columns of the table
+     * @return {boolean}             True when the boundary has a column of its own
+     */
+  static #tableColumn(cells, c, layout) {
+    return c < cells.length - 1 ? layout.inner : layout.outline.right !== 'none';
   }
 
   /**
@@ -1369,23 +1527,25 @@ class ReceiptPrinterEncoder {
      * left up to and including the boundary on its right, is drawn when the
      * cell above it wants its bottom side or the cell below it wants its top
      * side. Either row can be empty, which is the top and the bottom border
-     * of the table. A segment stops at the edge of the table, where the
-     * column of an outer rule is only there when the outline is on
+     * of the table. A segment stops at the edge of the table, and a boundary
+     * that has no column of its own takes no character
      *
-     * @param  {object[]}   above     The cells of the row above the line
-     * @param  {object[]}   below     The cells of the row below the line
-     * @param  {object}     outline   True for every side of the outline that is drawn
-     * @param  {number}     width     The width of the table in characters
-     * @return {Set}                  The character positions the line covers
+     * @param  {object[]}   above    The cells of the row above the line
+     * @param  {object[]}   below    The cells of the row below the line
+     * @param  {object}     layout   The styles and the rule columns of the table
+     * @param  {number}     width    The width of the table in characters
+     * @return {Set}                 The character positions the line covers
      */
-  static #tableSegments(above, below, outline, width) {
+  static #tableSegments(above, below, layout, width) {
     const positions = new Set();
 
     for (const [cells, side] of [[above, 'bottom'], [below, 'top']]) {
-      let position = outline.left ? 0 : -1;
+      let position = layout.outline.left !== 'none' ? 0 : -1;
 
-      for (const cell of cells) {
-        const end = position + 1 + cell.marginLeft + cell.width + cell.marginRight;
+      for (let c = 0; c < cells.length; c++) {
+        const cell = cells[c];
+        const end = position + cell.marginLeft + cell.width + cell.marginRight +
+          (ReceiptPrinterEncoder.#tableColumn(cells, c, layout) ? 1 : 0);
 
         if (cell.border[side]) {
           for (let p = Math.max(position, 0); p <= Math.min(end, width - 1); p++) {
@@ -1465,15 +1625,23 @@ class ReceiptPrinterEncoder {
      * vertical rule in the row above, a vertical rule in the row below, and
      * the horizontal line itself to the left and to the right, which runs
      * from a position when that position and its neighbour are both covered
-     * by an owned segment
+     * by an owned segment.
+     *
+     * The glyph at a junction follows from the shape and from one style per
+     * axis: the style of the horizontal line, which is the style of the side
+     * of the outline for the top and the bottom border and the style of a rule
+     * row in between, and the style of the vertical rule that runs through it,
+     * which is the same above and below the line
      *
      * @param  {number}   width      The width of the table in characters
-     * @param  {Set}      up         The positions of the vertical rules above the line
-     * @param  {Set}      down       The positions of the vertical rules below the line
+     * @param  {Map}      up         The styles of the vertical rules above the line, per position
+     * @param  {Map}      down       The styles of the vertical rules below the line, per position
      * @param  {Set}      covered    The positions the horizontal line covers
-     * @return {string[]|null}       The shapes, or null when the line is blank over its whole width
+     * @param  {string}   style      The style of the horizontal line itself
+     * @return {object[]|null}       The shape and the styles at every position, or null when the
+     *                               line is blank over its whole width
      */
-  static #tableShapes(width, up, down, covered) {
+  static #tableShapes(width, up, down, covered, style) {
     const shapes = [];
     let blank = true;
 
@@ -1485,7 +1653,12 @@ class ReceiptPrinterEncoder {
       );
 
       blank = blank && shape === 'blank';
-      shapes.push(shape);
+
+      shapes.push({
+        shape,
+        horizontal: style,
+        vertical: up.get(position) || down.get(position) || style,
+      });
     }
 
     return blank ? null : shapes;
@@ -1496,10 +1669,10 @@ class ReceiptPrinterEncoder {
      * #tableShapes(). A line that is blank over its whole width is not printed
      * at all
      *
-     * @param  {object}          elements   The glyphs and code pages of the border
-     * @param  {string[]|null}   shapes     The shape at every character position, or null
+     * @param  {function}        glyphs     The glyphs and code pages of the border, per pair of styles
+     * @param  {object[]|null}   shapes     The shape and the styles at every character position, or null
      */
-  #tableBorder(elements, shapes) {
+  #tableBorder(glyphs, shapes) {
     if (shapes === null) {
       return;
     }
@@ -1510,8 +1683,10 @@ class ReceiptPrinterEncoder {
 
     const fragments = [];
 
-    for (const shape of shapes) {
-      const element = shape === 'blank' ? {glyph: ' ', codepage: null} : elements[shape];
+    for (const {shape, horizontal, vertical} of shapes) {
+      const element = shape === 'blank' ?
+        {glyph: ' ', codepage: null} :
+        glyphs(horizontal, vertical)[shape];
       const last = fragments.length > 0 ? fragments[fragments.length - 1] : null;
 
       if (last !== null && last.codepage === element.codepage) {
@@ -1536,21 +1711,23 @@ class ReceiptPrinterEncoder {
      * Add one row of a table to the composer. Every printed line of the row is
      * the lines of its cells side by side, with their margins between them,
      * and with a vertical rule at the edges and at every boundary between two
-     * cells when the table has a border and one of the cells there wants it.
-     * The vertical rules are as tall as the tallest content of that printed
-     * line, the way a box draws them. An outer rule whose side of the outline
-     * is off has no column at all, the table is one character narrower there.
+     * cells when the table draws a line there and one of the cells there wants
+     * it. The vertical rules are as tall as the tallest content of that
+     * printed line, the way a box draws them. A boundary without a column of
+     * its own, an outer rule whose side of the outline is not drawn or a
+     * divider in a table without a border, takes no character at all, the
+     * table is one character narrower there.
      *
      * @param  {object[]}      cells      The cells of the row, with their widths and margins
-     * @param  {object}        elements   The glyphs and code pages of the border
-     * @param  {boolean}       bordered   True when the table has a border
-     * @param  {object}        outline    True for every side of the outline that is drawn
+     * @param  {function}      glyphs     The glyphs and code pages of the border, per pair of styles
+     * @param  {object}        layout     The styles and the rule columns of the table
      * @param  {LineSpacing}   previous   The line spacing to restore after a row that asked for none
      * @param  {boolean}       restore    True when this row restores the line spacing on its last
      *                                    line, because the table has no bottom border to restore it on
      */
-  #tableRow(cells, elements, bordered, outline, previous, restore) {
+  #tableRow(cells, glyphs, layout, previous, restore) {
     const lines = [];
+    const bordered = layout.bordered;
 
     /* The boundaries of this row a vertical rule is drawn at */
 
@@ -1636,8 +1813,8 @@ class ReceiptPrinterEncoder {
 
       const tallest = bordered ? Math.max(height, ...lines.map((cell) => cell[l].height)) : height;
 
-      if (bordered && outline.left) {
-        this.#tableRule(elements, tallest, height, edges[0]);
+      if (bordered && layout.outline.left !== 'none') {
+        this.#tableRule(glyphs, tallest, height, edges[0]);
       }
 
       for (let c = 0; c < cells.length; c++) {
@@ -1651,8 +1828,8 @@ class ReceiptPrinterEncoder {
           this.#composer.space(cells[c].marginRight);
         }
 
-        if (bordered && (c < cells.length - 1 || outline.right)) {
-          this.#tableRule(elements, tallest, height, edges[c + 1]);
+        if (bordered && ReceiptPrinterEncoder.#tableColumn(cells, c, layout)) {
+          this.#tableRule(glyphs, tallest, height, edges[c + 1]);
         }
       }
 
@@ -1670,19 +1847,21 @@ class ReceiptPrinterEncoder {
      * cells next to it wants is a space, so that the row stays as wide as the
      * table
      *
-     * @param  {object}    elements   The glyphs and code pages of the border
-     * @param  {number}    tallest    The height of the tallest content of the line
-     * @param  {number}    height     The height to restore after the rule
-     * @param  {boolean}   owned      True when the rule is drawn at this boundary
+     * @param  {function}  glyphs    The glyphs and code pages of the border, per pair of styles
+     * @param  {number}    tallest   The height of the tallest content of the line
+     * @param  {number}    height    The height to restore after the rule
+     * @param  {string|boolean}   style   The style of the rule, or false when it is not drawn
      */
-  #tableRule(elements, tallest, height, owned) {
-    if (!owned) {
+  #tableRule(glyphs, tallest, height, style) {
+    if (!style) {
       this.#composer.space(1);
       return;
     }
 
+    const element = glyphs(style, style).vertical;
+
     this.#composer.style.height = tallest;
-    this.#composer.text(elements.vertical.glyph, elements.vertical.codepage);
+    this.#composer.text(element.glyph, element.codepage);
     this.#composer.style.height = height;
   }
 
@@ -1694,19 +1873,19 @@ class ReceiptPrinterEncoder {
      * ones get any remainder. Widths are in characters of the current size.
      *
      * The columns are resolved against the width of the table, which is the
-     * width of the paper when the table does not have one of its own. With a
-     * border one character per vertical rule is part of the fixed width, which
-     * is one per boundary between two cells and one for every side of the
-     * outline that is drawn, so a table with a fill column and a border fills
-     * its width exactly.
+     * width of the paper when the table does not have one of its own. One
+     * character per vertical rule is part of the fixed width, which is one per
+     * boundary between two cells when the table has a border and one for the
+     * left and for the right side of the outline where those are drawn, so a
+     * table with a fill column and a border fills its width exactly.
      *
      * @param  {TableColumn[]}   columns    The column definitions
      * @param  {number}          [width]    The width of the table in characters of the current size
-     * @param  {boolean}         bordered   True when the table has a border
-     * @param  {object}          outline    True for every side of the outline that is drawn
+     * @param  {boolean}         inner      True when the table has a divider between two cells
+     * @param  {object}          outline    The style of every side of the outline
      * @return {TableColumn[]}              The column definitions with numeric widths
      */
-  #resolveColumns(columns, width, bordered, outline) {
+  #resolveColumns(columns, width, inner, outline) {
     if (!Array.isArray(columns) || columns.length === 0) {
       throw new Error('A table needs at least one column');
     }
@@ -1730,12 +1909,12 @@ class ReceiptPrinterEncoder {
       fixed += (column.marginLeft || 0) + (column.marginRight || 0);
     }
 
-    /* Every vertical rule of a bordered table takes one character, and the
-       outer rules are only there where the outline is on */
+    /* Every vertical rule of a bordered table takes one character: the
+       dividers between the cells only when the table has a border, the outer
+       rules only where the outline is drawn */
 
-    if (bordered) {
-      fixed += columns.length - 1 + (outline.left ? 1 : 0) + (outline.right ? 1 : 0);
-    }
+    fixed += (inner ? columns.length - 1 : 0) +
+      (outline.left !== 'none' ? 1 : 0) + (outline.right !== 'none' ? 1 : 0);
 
     /* The available width is the width of the table, or of the line, in characters of the current size */
 
@@ -1812,7 +1991,8 @@ class ReceiptPrinterEncoder {
      * Insert a box
      *
      * @param  {BoxOptions}       options   And object with the following properties:
-     *                                      - border: The style of the border, either none, single or double
+     *                                      - outline: The style of the border around the box, either none,
+     *                                        single or double
      *                                      - corners: The style of the corners, either square or rounded
      *                                      - width: The width of the box, by default the width of the paper
      *                                      - marginLeft: Space between the left border and the left edge
@@ -1836,12 +2016,19 @@ class ReceiptPrinterEncoder {
       paddingRight: 0,
     }, options || {});
 
-    /* The style option is the old name of the border option, which wins when both are given */
+    /* The border of a box is the outline option, which is called border on a
+       table, where it is the style of the lines between the cells instead */
 
-    const border = typeof options.border === 'undefined' ? options.style : options.border;
+    if (typeof options.border !== 'undefined') {
+      throw new Error('The border option of a box is called outline');
+    }
 
-    if (!['none', 'single', 'double'].includes(border)) {
-      throw new Error('Unknown border style');
+    /* The style option is the old name of the outline option, which wins when both are given */
+
+    const outline = typeof options.outline === 'undefined' ? options.style : options.outline;
+
+    if (!['none', 'single', 'double'].includes(outline)) {
+      throw new Error('Unknown outline style');
     }
 
     if (!['square', 'rounded'].includes(options.corners)) {
@@ -1858,8 +2045,8 @@ class ReceiptPrinterEncoder {
       throw new Error('Box is too wide');
     }
 
-    const bordered = border !== 'none';
-    const elements = bordered ? this.#borders().glyphs(border, options.corners) : null;
+    const bordered = outline !== 'none';
+    const elements = bordered ? this.#borders().glyphs(outline, outline, options.corners) : null;
 
     /* Render the contents of the box */
 

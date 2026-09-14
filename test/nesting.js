@@ -33,7 +33,7 @@ describe('Nesting boxes and tables', function() {
     describe('a bordered box inside a bordered box', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
-            .box({ width: 20, border: 'single' }, (box) => box.box({ width: 16, border: 'single' }, 'hi'))
+            .box({ width: 20, outline: 'single' }, (box) => box.box({ width: 16, outline: 'single' }, 'hi'))
             .encode();
 
         it('should set the line spacing once and restore it once', function () {
@@ -52,7 +52,7 @@ describe('Nesting boxes and tables', function() {
         let result = encoder
             .table(
                 [ { width: 14 }, { width: 16, marginLeft: 2 } ],
-                [ [ (cell) => cell.box({ width: 14, border: 'single' }, 'hi'), 'x' ] ],
+                [ [ (cell) => cell.box({ width: 14, outline: 'single' }, 'hi'), 'x' ] ],
             )
             .encode();
 
@@ -69,7 +69,7 @@ describe('Nesting boxes and tables', function() {
     describe('a table inside a bordered box', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
-            .box({ width: 20, border: 'single' }, (box) => box.table(
+            .box({ width: 20, outline: 'single' }, (box) => box.table(
                 [ { width: 8 }, { width: 8, align: 'right' } ],
                 [ [ 'a', 'b' ] ],
             ))
@@ -87,7 +87,7 @@ describe('Nesting boxes and tables', function() {
     describe('a box inside a box, both without a border', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
-            .box({ width: 20, border: 'none' }, (box) => box.box({ width: 16, border: 'none' }, 'hi'))
+            .box({ width: 20, outline: 'none' }, (box) => box.box({ width: 16, outline: 'none' }, 'hi'))
             .encode();
 
         it('should not change the line spacing', function () {
@@ -98,8 +98,8 @@ describe('Nesting boxes and tables', function() {
     });
     describe('two bordered boxes of unequal height, side by side in a table', function () {
         const cells = [
-            (cell) => cell.box({ width: 14, border: 'single' }, 'a'),
-            (cell) => cell.box({ width: 14, border: 'single' }, 'bbbb bbbb bbbb bbbb'),
+            (cell) => cell.box({ width: 14, outline: 'single' }, 'a'),
+            (cell) => cell.box({ width: 14, outline: 'single' }, 'bbbb bbbb bbbb bbbb'),
         ];
 
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
@@ -139,8 +139,8 @@ describe('Nesting boxes and tables', function() {
 
     describe('two bordered boxes of unequal height on star-prnt', function () {
         const cells = [
-            (cell) => cell.box({ width: 14, border: 'single' }, 'a'),
-            (cell) => cell.box({ width: 14, border: 'single' }, 'bbbb bbbb bbbb bbbb'),
+            (cell) => cell.box({ width: 14, outline: 'single' }, 'a'),
+            (cell) => cell.box({ width: 14, outline: 'single' }, 'bbbb bbbb bbbb bbbb'),
         ];
 
         let encoder = new ReceiptPrinterEncoder({ language: 'star-prnt', columns: 32 });
@@ -164,7 +164,7 @@ describe('Nesting boxes and tables', function() {
     describe('a bordered box inside a box without a border', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
-            .box({ width: 20, border: 'none' }, (box) => box.box({ width: 16, border: 'single' }, 'hi'))
+            .box({ width: 20, outline: 'none' }, (box) => box.box({ width: 16, outline: 'single' }, 'hi'))
             .encode();
 
         it('should wrap the lines of the outer box', function () {
@@ -179,9 +179,9 @@ describe('Nesting boxes and tables', function() {
     describe('a box, a table, a cell and a bordered box, four levels deep', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
-            .box({ width: 24, border: 'none' }, (box) => box.table(
+            .box({ width: 24, outline: 'none' }, (box) => box.table(
                 [ { width: 12 }, { width: 12 } ],
-                [ [ (cell) => cell.box({ width: 12, border: 'single' }, 'z'), 'q' ] ],
+                [ [ (cell) => cell.box({ width: 12, outline: 'single' }, 'z'), 'q' ] ],
             ))
             .encode();
 
@@ -215,9 +215,9 @@ describe('Nesting boxes and tables', function() {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
             .table([ { width: 14 }, { width: 14 } ], [ [
-                (cell) => cell.table([ { width: 5 }, { width: 5 } ], [ [ 'a', 'b' ] ], { border: 'single' }),
+                (cell) => cell.table([ { width: 5 }, { width: 5 } ], [ [ 'a', 'b' ] ], { outline: 'single', border: 'single' }),
                 'x',
-            ] ], { border: 'single' })
+            ] ], { outline: 'single', border: 'single' })
             .encode();
 
         it('should set the line spacing once at the start of the outer table and once at its end', function () {
@@ -237,10 +237,10 @@ describe('Nesting boxes and tables', function() {
     describe('a bordered table inside a bordered box', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
-            .box({ width: 20, border: 'single' }, (box) => box.table(
+            .box({ width: 20, outline: 'single' }, (box) => box.table(
                 [ { width: 8 }, { width: 7 } ],
                 [ [ 'a', 'b' ] ],
-                { border: 'single' },
+                { outline: 'single', border: 'single' },
             ))
             .encode();
 
@@ -260,9 +260,9 @@ describe('Nesting boxes and tables', function() {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
             .table([ { width: 14 }, { width: 14 } ], [ [
-                (cell) => cell.box({ width: 10, border: 'single' }, 'z'),
+                (cell) => cell.box({ width: 10, outline: 'single' }, 'z'),
                 'q',
-            ] ], { border: 'single' })
+            ] ], { outline: 'single', border: 'single' })
             .encode();
 
         it('should print the box inside the cell without touching the line spacing itself', function () {
@@ -283,9 +283,9 @@ describe('Nesting boxes and tables', function() {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
             .table([ { width: 14 }, { width: 14 } ], [ [
-                (cell) => cell.table([ {} ], [ [ 'a' ] ], { border: 'single', width: 8 }),
+                (cell) => cell.table([ {} ], [ [ 'a' ] ], { outline: 'single', border: 'single', width: 8 }),
                 'x',
-            ] ], { border: 'single' })
+            ] ], { outline: 'single', border: 'single' })
             .encode();
 
         it('should resolve the width against the cell, not against the paper', function () {

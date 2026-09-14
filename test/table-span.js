@@ -34,7 +34,7 @@ describe('Spanned table cells', function() {
         let result = encode((e) => e.table(
             [ { width: 6, marginRight: 1 }, { width: 6, marginLeft: 1 } ],
             [ [ 'a', 'b' ], [ { span: 2, content: 'total', align: 'right' } ], [ 'c', 'd' ] ],
-            { border: 'single', rules: 'all' },
+            { outline: 'single', border: 'single', rules: 'all' },
         ));
 
         it('should be as wide as the columns, the margins between them and the swallowed rule', function () {
@@ -58,9 +58,9 @@ describe('Spanned table cells', function() {
                 encode((e) => e.table(
                     [ { width: 6 }, { width: 6 } ],
                     [ [ { span: 2, content: 'one two three four five' } ] ],
-                    { border: 'single' },
+                    { outline: 'single', border: 'single' },
                 )),
-                encode((e) => e.table([ { width: 13 } ], [ [ 'one two three four five' ] ], { border: 'single' })));
+                encode((e) => e.table([ { width: 13 } ], [ [ 'one two three four five' ] ], { outline: 'single', border: 'single' })));
         });
 
         it('should wrap, clip and align like a plain cell of that width', function () {
@@ -68,12 +68,12 @@ describe('Spanned table cells', function() {
                 encode((e) => e.table(
                     [ { width: 6, overflow: 'ellipsis', align: 'right' }, { width: 6 } ],
                     [ [ { span: 2, content: 'one two three four five' } ] ],
-                    { border: 'single' },
+                    { outline: 'single', border: 'single' },
                 )),
                 encode((e) => e.table(
                     [ { width: 13, overflow: 'ellipsis', align: 'right' } ],
                     [ [ 'one two three four five' ] ],
-                    { border: 'single' },
+                    { outline: 'single', border: 'single' },
                 )));
         });
 
@@ -82,12 +82,12 @@ describe('Spanned table cells', function() {
                 encode((e) => e.table(
                     [ { width: 6 }, { width: 6 } ],
                     [ [ { span: 2, content: (cell) => cell.bold().text('hi') } ] ],
-                    { border: 'single' },
+                    { outline: 'single', border: 'single' },
                 )),
                 encode((e) => e.table(
                     [ { width: 13 } ],
                     [ [ (cell) => cell.bold().text('hi') ] ],
-                    { border: 'single' },
+                    { outline: 'single', border: 'single' },
                 )));
         });
     });

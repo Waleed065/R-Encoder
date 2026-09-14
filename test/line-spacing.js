@@ -102,7 +102,7 @@ describe('lineSpacing()', function() {
 
     describe('a box with a border', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
-        let result = encoder.box({ width: 10, border: 'single' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single' }, 'hi').encode();
 
         it('should be wrapped in a line spacing of none and a restore', function () {
             assert.deepEqual(new Uint8Array([
@@ -115,7 +115,7 @@ describe('lineSpacing()', function() {
 
     describe('a box without a border', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
-        let result = encoder.box({ width: 10, border: 'none' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'none' }, 'hi').encode();
 
         it('should not change the line spacing', function () {
             assert.deepEqual(new Uint8Array([
@@ -126,7 +126,7 @@ describe('lineSpacing()', function() {
 
     describe('a line after a box with a border', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
-        let result = encoder.box({ width: 10, border: 'single' }, 'hi').line('ok').encode();
+        let result = encoder.box({ width: 10, outline: 'single' }, 'hi').line('ok').encode();
 
         it('should restore the line spacing before its own content', function () {
             assert.deepEqual(new Uint8Array([
@@ -163,7 +163,7 @@ describe('lineSpacing()', function() {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
 
         it('should throw', function () {
-            expect(() => encoder.box({ width: 10, border: 'none' }, (box) => box.lineSpacing('none')).encode())
+            expect(() => encoder.box({ width: 10, outline: 'none' }, (box) => box.lineSpacing('none')).encode())
                 .to.throw('Changing the line spacing is not supported in table cells or boxes');
         });
     });
@@ -181,7 +181,7 @@ describe('lineSpacing()', function() {
 
     describe('lineSpacing(none) around a box with a border', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
-        let result = encoder.lineSpacing('none').box({ width: 10, border: 'single' }, 'x').line('y').encode();
+        let result = encoder.lineSpacing('none').box({ width: 10, outline: 'single' }, 'x').line('y').encode();
 
         it('should keep the line spacing of none after the box', function () {
             assert.deepEqual(new Uint8Array([
@@ -196,8 +196,8 @@ describe('lineSpacing()', function() {
     describe('two boxes with a border, back to back', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
         let result = encoder
-            .box({ width: 10, border: 'single' }, 'a')
-            .box({ width: 10, border: 'single' }, 'b')
+            .box({ width: 10, outline: 'single' }, 'a')
+            .box({ width: 10, outline: 'single' }, 'b')
             .encode();
 
         it('should restore the line spacing after each of them, they are separate boxes', function () {

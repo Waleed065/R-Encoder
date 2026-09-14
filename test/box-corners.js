@@ -29,7 +29,7 @@ describe('Rounded corners', function() {
 
     describe('box() with rounded corners on an Epson mapping', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 });
-        let result = encoder.box({ width: 10, border: 'single', corners: 'rounded' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single', corners: 'rounded' }, 'hi').encode();
 
         it('should draw the whole box in the Katakana page', function () {
             assert.deepEqual(new Uint8Array([
@@ -42,7 +42,7 @@ describe('Rounded corners', function() {
 
     describe('box() with square corners on an Epson mapping', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 });
-        let result = encoder.box({ width: 10, border: 'single' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single' }, 'hi').encode();
 
         it('should draw the box in cp437', function () {
             assert.deepEqual(new Uint8Array([
@@ -55,7 +55,7 @@ describe('Rounded corners', function() {
 
     describe('box() with rounded corners on the Star mapping', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'star-prnt', columns: 48 });
-        let result = encoder.box({ width: 10, border: 'single', corners: 'rounded' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single', corners: 'rounded' }, 'hi').encode();
 
         it('should draw the corners in the standard page and the lines in cp437', function () {
             assert.deepEqual(new Uint8Array([
@@ -71,10 +71,10 @@ describe('Rounded corners', function() {
 
     describe('box() with rounded corners on the SUNMI mapping', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', codepageMapping: 'sunmi', columns: 42 });
-        let rounded = encoder.box({ width: 10, border: 'single', corners: 'rounded' }, 'hi').encode();
+        let rounded = encoder.box({ width: 10, outline: 'single', corners: 'rounded' }, 'hi').encode();
 
         let square = new ReceiptPrinterEncoder({ language: 'esc-pos', codepageMapping: 'sunmi', columns: 42 })
-            .box({ width: 10, border: 'single', corners: 'square' }, 'hi').encode();
+            .box({ width: 10, outline: 'single', corners: 'square' }, 'hi').encode();
 
         it('should silently fall back to square corners', function () {
             assert.deepEqual(square, rounded);
@@ -83,19 +83,19 @@ describe('Rounded corners', function() {
 
     describe('box() with rounded corners and a double border', function () {
         let rounded = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
-            .box({ width: 10, border: 'double', corners: 'rounded' }, 'hi').encode();
+            .box({ width: 10, outline: 'double', corners: 'rounded' }, 'hi').encode();
 
         let square = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
-            .box({ width: 10, border: 'double' }, 'hi').encode();
+            .box({ width: 10, outline: 'double' }, 'hi').encode();
 
         it('should ignore the corners, a double border has no rounded corners', function () {
             assert.deepEqual(square, rounded);
         });
     });
 
-    describe('box() with the style option instead of border', function () {
+    describe('box() with the style option instead of outline', function () {
         let border = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
-            .box({ width: 10, border: 'double' }, 'hi').encode();
+            .box({ width: 10, outline: 'double' }, 'hi').encode();
 
         let style = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
             .box({ width: 10, style: 'double' }, 'hi').encode();
@@ -105,19 +105,19 @@ describe('Rounded corners', function() {
         });
     });
 
-    describe('box() with both the border and the style option', function () {
+    describe('box() with both the outline and the style option', function () {
         let both = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
-            .box({ width: 10, border: 'double', style: 'none' }, 'hi').encode();
+            .box({ width: 10, outline: 'double', style: 'none' }, 'hi').encode();
 
         let border = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
-            .box({ width: 10, border: 'double' }, 'hi').encode();
+            .box({ width: 10, outline: 'double' }, 'hi').encode();
 
-        it('should use the border option', function () {
+        it('should use the outline option', function () {
             assert.deepEqual(border, both);
         });
     });
 
-    describe('box() with style: none and no border option', function () {
+    describe('box() with style: none and no outline option', function () {
         let result = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
             .box({ width: 10, style: 'none' }, 'hi').encode();
 
@@ -129,7 +129,7 @@ describe('Rounded corners', function() {
     });
     describe('box() with rounded corners on an esc-pos printer with the Star mapping', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', codepageMapping: 'star', columns: 42 });
-        let result = encoder.box({ width: 10, border: 'single', corners: 'rounded' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single', corners: 'rounded' }, 'hi').encode();
 
         it('should take the corners from the Star Katakana page and the lines from cp437', function () {
             assert.deepEqual(new Uint8Array([
@@ -143,7 +143,7 @@ describe('Rounded corners', function() {
 
     describe('box() with rounded corners on star-line', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'star-line', columns: 42 });
-        let result = encoder.box({ width: 10, border: 'single', corners: 'rounded' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single', corners: 'rounded' }, 'hi').encode();
 
         it('should draw the corners in the standard page and the lines in cp437', function () {
             assert.deepEqual(new Uint8Array([
@@ -158,7 +158,7 @@ describe('Rounded corners', function() {
 
     describe('box() with a double border', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 });
-        let result = encoder.box({ width: 10, border: 'double' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'double' }, 'hi').encode();
 
         it('should draw the double line glyphs of cp437', function () {
             assert.deepEqual(new Uint8Array([
@@ -176,7 +176,7 @@ describe('Rounded corners', function() {
             codepageMapping: { 'star/standard': 0, 'cp437': 1 },
         });
 
-        let result = encoder.box({ width: 10, border: 'single', corners: 'rounded' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single', corners: 'rounded' }, 'hi').encode();
 
         it('should still draw the lines in cp437 and the corners in the page that has them', function () {
             assert.deepEqual(new Uint8Array([
@@ -195,7 +195,7 @@ describe('Rounded corners', function() {
             codepageMapping: { 'windows1252': 0, 'cp865': 1 },
         });
 
-        let result = encoder.codepage('windows1252').box({ width: 10, border: 'single' }, 'hi').encode();
+        let result = encoder.codepage('windows1252').box({ width: 10, outline: 'single' }, 'hi').encode();
 
         it('should draw the border in the first page that has the glyphs', function () {
             assert.deepEqual(new Uint8Array([
@@ -210,11 +210,11 @@ describe('Rounded corners', function() {
         });
     });
 
-    describe('box() with an unknown border style', function () {
+    describe('box() with an unknown outline style', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 });
 
         it('should throw', function () {
-            expect(() => encoder.box({ width: 10, border: 'dotted' }, 'hi')).to.throw('Unknown border style');
+            expect(() => encoder.box({ width: 10, outline: 'dotted' }, 'hi')).to.throw('Unknown outline style');
         });
     });
 
@@ -232,7 +232,7 @@ describe('Rounded corners', function() {
             codepageMapping: { 'star/standard': 1 },
         });
 
-        let result = encoder.codepage('star/standard').box({ width: 10, border: 'single' }, 'hi').encode();
+        let result = encoder.codepage('star/standard').box({ width: 10, outline: 'single' }, 'hi').encode();
 
         it('should draw the border in ASCII', function () {
             assert.deepEqual(new Uint8Array([
@@ -254,7 +254,7 @@ describe('Rounded corners', function() {
             codepageMapping: { 'cp850': 2 },
         });
 
-        let result = encoder.box({ width: 10, border: 'single' }, 'hi').line('ok').encode();
+        let result = encoder.box({ width: 10, outline: 'single' }, 'hi').line('ok').encode();
 
         it('should start on the first page of the mapping, without an explicit codepage()', function () {
             assert.deepEqual(new Uint8Array([
@@ -266,12 +266,21 @@ describe('Rounded corners', function() {
         });
     });
 
-    describe('a border option on the constructor', function () {
-        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42, border: 'single' });
-        let result = encoder.box({ width: 10, border: 'single' }, 'hi').encode();
+    describe('box() with a border option', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 });
+
+        it('should throw, the option is called outline', function () {
+            expect(() => encoder.box({ width: 10, border: 'none' }, 'hi'))
+                .to.throw('The border option of a box is called outline');
+        });
+    });
+
+    describe('an outline option on the constructor', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42, outline: 'single' });
+        let result = encoder.box({ width: 10, outline: 'single' }, 'hi').encode();
 
         let expected = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
-            .box({ width: 10, border: 'single' }, 'hi').encode();
+            .box({ width: 10, outline: 'single' }, 'hi').encode();
 
         it('should be ignored, the borders are not a setting of the printer', function () {
             assert.deepEqual(expected, result);
@@ -280,21 +289,21 @@ describe('Rounded corners', function() {
 
     describe('a borders option on the constructor', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42, borders: 'nonsense' });
-        let result = encoder.box({ width: 10, border: 'single' }, 'hi').encode();
+        let result = encoder.box({ width: 10, outline: 'single' }, 'hi').encode();
 
         let expected = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 })
-            .box({ width: 10, border: 'single' }, 'hi').encode();
+            .box({ width: 10, outline: 'single' }, 'hi').encode();
 
         it('should be ignored, it is only honoured in table cells and boxes', function () {
             assert.deepEqual(expected, result);
         });
     });
 
-    describe('box() with a border of none and unknown corners', function () {
+    describe('box() with an outline of none and unknown corners', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 42 });
 
         it('should still throw', function () {
-            expect(() => encoder.box({ width: 10, border: 'none', corners: 'curved' }, 'hi')).to.throw('Unknown corners');
+            expect(() => encoder.box({ width: 10, outline: 'none', corners: 'curved' }, 'hi')).to.throw('Unknown corners');
         });
     });
 });
