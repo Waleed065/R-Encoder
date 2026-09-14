@@ -293,15 +293,17 @@ describe('Borders per table cell', function() {
     });
 
     /* A few hundred random tables, with random borders per cell and per side,
-       checked against the rules the drawing has to follow: every printed line
-       is as wide as the table, every row has a vertical rule exactly at the
+       a random outline, random margins per column and per cell, checked
+       against the rules the drawing has to follow: every printed line is as
+       wide as the table, which is one character narrower on every side of the
+       outline that is off, every row has a vertical rule exactly at the
        boundaries one of the cells next to it wants, and every glyph of a
        horizontal line has an up and a down stroke where the rows above and
        below it have a rule, and a horizontal stroke exactly where the cells
        above and below own a segment. The ownership is worked out here from
        the cells themselves, the glyphs are read from the paper */
 
-    describe('random tables with random borders per cell', function () {
+    describe('random tables with random borders, outlines and margins', function () {
         const STROKES = {
             ' ': '', '─': 'lr', '│': 'ud', '┌': 'dr', '┐': 'dl', '└': 'ur', '┘': 'ul',
             '├': 'udr', '┤': 'udl', '┬': 'dlr', '┴': 'ulr', '┼': 'udlr',
@@ -324,22 +326,52 @@ describe('Borders per table cell', function() {
 
         const side = (style) => random(3) === 0 ? 'none' : style;
 
-        const cell = (content, style) => {
+        /* The sides a border value, of a cell or of the outline of the table,
+           asks for: only turning a side off is allowed, so every side that is
+           not none is drawn */
+
+        const sides = (value) => {
+            const result = { top: true, right: true, bottom: true, left: true };
+
+            for (const key of Object.keys(result)) {
+                if (value === 'none' || (typeof value === 'object' && value !== null && value[key] === 'none')) {
+                    result[key] = false;
+                }
+            }
+
+            return result;
+        };
+
+        const border = (style) => {
             switch (random(4)) {
                 case 0:
-                    return content;
+                    return undefined;
                 case 1:
-                    return { content, border: 'none' };
+                    return 'none';
                 case 2:
-                    return { content, border: {
-                        top: side(style), right: side(style), bottom: side(style), left: side(style),
-                    } };
+                    return { top: side(style), right: side(style), bottom: side(style), left: side(style) };
                 default:
-                    return { content, border: style };
+                    return style;
             }
         };
 
-        /* A row of cells, which every now and then spans two columns */
+        const outline = (style) => {
+            switch (random(4)) {
+                case 0:
+                    return undefined;
+                case 1:
+                    return 'none';
+                case 2:
+                    return { top: side(style), right: side(style), bottom: side(style), left: side(style) };
+                default:
+                    return style;
+            }
+        };
+
+        /* A row of cells, which every now and then spans two columns. The
+           margins of a cell override those of the columns it covers and take
+           their characters from the contents, so they can never take more
+           than the cell has */
 
         const row = (columns, style) => {
             const cells = [];
@@ -347,9 +379,20 @@ describe('Borders per table cell', function() {
 
             while (c < columns.length) {
                 const span = 1 + random(Math.min(2, columns.length - c));
-                const value = cell(String.fromCharCode(97 + c), style);
+                const cell = { content: String.fromCharCode(97 + c), span, border: border(style) };
 
-                cells.push(Object.assign(typeof value === 'object' ? value : { content: value }, { span }));
+                const room = columns.slice(c, c + span).reduce(
+                    (total, column) => total + column.width + column.marginLeft + column.marginRight, span - 1);
+
+                const marginLeft = random(3);
+                const marginRight = random(3);
+
+                if (random(2) === 0 && marginLeft + marginRight < room) {
+                    cell.marginLeft = marginLeft;
+                    cell.marginRight = marginRight;
+                }
+
+                cells.push(cell);
                 c += span;
             }
 
@@ -358,32 +401,43 @@ describe('Borders per table cell', function() {
 
         /* The sides of the border every cell of a row wants, and the positions
            of the boundaries around it, as the table works them out: a cell
-           that spans columns swallows the rules between them */
+           that spans columns swallows the rules between them, and the margins
+           of a cell keep the width of the columns it covers. Without the left
+           side of the outline the column of the rule at the left edge is not
+           there, so the first cell starts one character earlier */
 
-        const resolve = (cells, columns) => {
-            let position = 0;
+        const resolve = (cells, columns, edges) => {
+            let position = edges.left ? 0 : -1;
             let column = 0;
 
             return cells.map((cell) => {
-                const sides = { top: true, right: true, bottom: true, left: true };
-                const border = cell.border;
-
-                for (const side of Object.keys(sides)) {
-                    if (border === 'none' || (typeof border === 'object' && border[side] === 'none')) {
-                        sides[side] = false;
-                    }
-                }
-
                 const start = position;
 
                 for (let c = column; c < column + cell.span; c++) {
-                    position += columns[c].width + 1;
+                    position += columns[c].width + columns[c].marginLeft + columns[c].marginRight + 1;
                 }
 
                 column += cell.span;
 
-                return { sides, start, end: position };
+                return { sides: sides(cell.border), start, end: position };
             });
+        };
+
+        /* The outline of the table is a mask on the sides the cells asked for */
+
+        const mask = (rows, edges) => {
+            for (const cells of rows) {
+                cells[0].sides.left = cells[0].sides.left && edges.left;
+                cells[cells.length - 1].sides.right = cells[cells.length - 1].sides.right && edges.right;
+            }
+
+            for (const [cells, side] of [ [ rows[0], 'top' ], [ rows[rows.length - 1], 'bottom' ] ]) {
+                for (const cell of cells) {
+                    cell.sides[side] = cell.sides[side] && edges[side];
+                }
+            }
+
+            return rows;
         };
 
         /* A vertical rule is drawn at a boundary when the cell on its left
@@ -420,13 +474,13 @@ describe('Borders per table cell', function() {
         /* A horizontal segment over the width of a cell is drawn when that
            cell wants its bottom side or the cell below it wants its top side */
 
-        const segments = (above, below) => {
+        const segments = (above, below, width) => {
             const positions = new Set();
 
             for (const [cells, side] of [ [ above, 'bottom' ], [ below, 'top' ] ]) {
                 for (const cell of cells) {
                     if (cell.sides[side]) {
-                        for (let p = cell.start; p <= cell.end; p++) {
+                        for (let p = Math.max(cell.start, 0); p <= Math.min(cell.end, width - 1); p++) {
                             positions.add(p);
                         }
                     }
@@ -439,13 +493,26 @@ describe('Borders per table cell', function() {
         it('should print every line as wide as the table, with the strokes the cells ask for', function () {
             for (let t = 0; t < 400; t++) {
                 const count = 1 + random(4);
-                const columns = new Array(count).fill(0).map(() => ({ width: 2 + random(5) }));
-                const width = columns.reduce((total, column) => total + column.width, count + 1);
+                const columns = new Array(count).fill(0).map(() => ({
+                    width: 2 + random(5), marginLeft: random(3), marginRight: random(3),
+                }));
+
+                const style = random(2) === 0 ? 'single' : 'double';
 
                 const options = {
-                    border: random(2) === 0 ? 'single' : 'double',
+                    border: style,
                     rules: random(3) === 0 ? 'all' : 'none',
+                    outline: outline(style),
                 };
+
+                /* The columns of the outer rules are part of the width of the
+                   table only where the outline is on */
+
+                const edges = sides(options.outline);
+
+                const width = columns.reduce(
+                    (total, column) => total + column.width + column.marginLeft + column.marginRight,
+                    count - 1 + (edges.left ? 1 : 0) + (edges.right ? 1 : 0));
 
                 const data = [];
 
@@ -453,7 +520,7 @@ describe('Borders per table cell', function() {
                     data.push(row(columns, options.border));
                 }
 
-                const rows = data.map((cells) => resolve(cells, columns));
+                const rows = mask(data.map((cells) => resolve(cells, columns, edges)), edges);
 
                 /* The lines the table is expected to print: the top border,
                    every row, a rule row between every pair of rows when the
@@ -463,7 +530,7 @@ describe('Borders per table cell', function() {
                 const expected = [];
 
                 const horizontal = (above, below) => {
-                    const covered = segments(above, below);
+                    const covered = segments(above, below, width);
                     const up = rules(above);
                     const down = rules(below);
 
@@ -488,8 +555,9 @@ describe('Borders per table cell', function() {
 
                 horizontal(rows[rows.length - 1], []);
 
-                const source = JSON.stringify(data);
-                const result = print((e) => e.table(columns, data, options)).split('\n').slice(0, -1);
+                const source = JSON.stringify({ columns, data, options });
+                const result = print((e) => e.table(columns, data, options), { columns: 48 })
+                    .split('\n').slice(0, -1);
 
                 assert.equal(result.length, expected.length, `the number of lines of ${source}`);
 
