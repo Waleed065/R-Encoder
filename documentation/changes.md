@@ -121,7 +121,7 @@ A row of a table has to be an array of cells, or a rule row, which is an object 
 - The border option of `box()` is now called `outline` instead of `style`, because it is not a text style and it reads the same as the option of a table. The old name still works, and when both are given `outline` wins.
 - The `lineSpacing()` command changes the distance the paper is fed after every line, either the `default` of the printer or `none`. A bordered box prints without line spacing, so the vertical lines of its border touch instead of leaving a gap on every line, which changes the bytes of every box with a border compared to version 3.
 - The `markdown()` command prints a subset of GitHub Flavored Markdown: headings, rules, pipe tables, lists, bold, underline, italic, invert, links and images. It has no options, everything it prints goes through the commands the encoder already has, and it works inside table cells and boxes.
-- The `receiptline()` command prints a receiptline document, with the layout provided by the `@point-of-sale/receiptline` package through the new `receiptline` option. It is the one asynchronous command.
+- The `receiptline()` command prints a receiptline document, with the layout provided by the [`@point-of-sale/receiptline`](https://github.com/at-point-of-sale/ReceiptLine) package through the new `receiptline` option. It is the one asynchronous command.
 - `image()` accepts an `ImageBitmap` in the browser, for example from `createImageBitmap()`.
 - The `feedAfterBlock` option, see above.
 - The `gs1-128` barcode symbology.

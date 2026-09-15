@@ -49,7 +49,7 @@ Create a set of commands that can be send to any receipt printer that supports E
 
 ## Markdown and ReceiptLine
 
-The `markdown()` and `receiptline()` commands print a whole document written in a markup language instead of building it up command by command. Markdown is built in, receiptline needs the separate `@point-of-sale/receiptline` package. Both commands are part of the [commands for creating receipts](commands.md) and this chapter describes them in detail.
+The `markdown()` and `receiptline()` commands print a whole document written in a markup language instead of building it up command by command. Markdown is built in, receiptline needs the separate [`@point-of-sale/receiptline`](https://github.com/at-point-of-sale/ReceiptLine) package. Both commands are part of the [commands for creating receipts](commands.md) and this chapter describes them in detail.
 
 <br>
 
@@ -229,7 +229,7 @@ Everything is printed with the alignment of the encoder, which the Markdown sour
 
 ### ReceiptLine
 
-Print a [receiptline](https://github.com/receiptline/receiptline) document, the receipt markup language of the OpenReceipt project. The layout is not part of this library: it comes from the `@point-of-sale/receiptline` package, which you give to the encoder with the `receiptline` option when you create it. See [the configuration options](configuration.md#receiptline).
+Print a [receiptline](https://github.com/receiptline/receiptline) document, the receipt markup language of the OpenReceipt project. The layout is not part of this library: it comes from the [`@point-of-sale/receiptline`](https://github.com/at-point-of-sale/ReceiptLine) package, which you give to the encoder with the `receiptline` option when you create it. See [the configuration options](configuration.md#receiptline).
 
 ```js
 import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
@@ -258,7 +258,7 @@ let result = encoder
 
 This is the one command that is asynchronous, because the images in a document have to be decoded before the document can be printed. It returns a promise that resolves with the encoder, so the commands after it come after an `await`, or in the `then()` of the promise.
 
-The second parameter is an object with the options of the package, such as `cut` for what a cut line becomes and `corners` for rounded corners; see the documentation of `@point-of-sale/receiptline` for all of them. The document positions everything itself, so it prints at left alignment and in the plain style, and it leaves the encoder that way. The final cut is yours to add.
+The second parameter is an object with the options of the package, such as `cut` for what a cut line becomes and `corners` for rounded corners; see the [documentation of `@point-of-sale/receiptline`](https://github.com/at-point-of-sale/ReceiptLine) for all of them. The document positions everything itself, so it prints at left alignment and in the plain style, and it leaves the encoder that way. The final cut is yours to add.
 
 Without the option the command throws. It is not available in table cells and boxes.
 

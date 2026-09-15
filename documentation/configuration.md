@@ -180,7 +180,7 @@ let encoder = new ReceiptPrinterEncoder({
 
 ### ReceiptLine
 
-The `receiptline()` command prints documents in the receiptline markup language, but the layout of those documents is not part of this library. It lives in the `@point-of-sale/receiptline` package, which decodes the images in a document with `pngjs` in Node and with the browser's own decoder in the browser. Give the module to the encoder with the `receiptline` option and the command becomes available:
+The `receiptline()` command prints documents in the receiptline markup language, but the layout of those documents is not part of this library. It lives in the [`@point-of-sale/receiptline`](https://github.com/at-point-of-sale/ReceiptLine) package, which decodes the images in a document with `pngjs` in Node and with the browser's own decoder in the browser. Give the module to the encoder with the `receiptline` option and the command becomes available:
 
 ```js
 import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
