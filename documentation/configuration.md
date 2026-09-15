@@ -60,6 +60,8 @@ Or if you are using a cheap printer without a proper brandname, you can try `pos
 
 <br>
 
+The cheap Bluetooth Low Energy printers that are sold as cat printers, or Meow printers, have no fonts and no barcode engine and only print images. Use the `meow` model for them. It configures the encoder for 58 mm paper with the fonts and code pages of an Epson printer, and a driver such as [WebBluetoothReceiptPrinter](https://github.com/at-point-of-sale/WebBluetoothReceiptPrinter) renders the ESC/POS commands to images with [ReceiptPrinterRenderer](https://github.com/at-point-of-sale/ReceiptPrinterRenderer) before sending them to the printer.
+
 -----
 
 <br>
