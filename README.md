@@ -11,12 +11,13 @@ Create a set of commands that can be send to any receipt printer that supports E
 - [Handling text](documentation/text.md)
 - [Commands for creating receipts](documentation/commands.md)
 - [Printing receipts](documentation/printing.md)
-- [Changes from version 2 to version 3](documentation/changes.md)
+- [Changes from version 3 to version 4](documentation/changes.md)
+- [Changes from version 2 to version 3](documentation/changes.md#migrating-from-version-2-to-version-3)
 
 <br>
 
 [![npm](https://img.shields.io/npm/v/@point-of-sale/receipt-printer-encoder)](https://www.npmjs.com/@point-of-sale/receipt-printer-encoder)
-![GitHub License](https://img.shields.io/github/license/NielsLeenheer/ReceiptPrinterEncoder)
+![GitHub License](https://img.shields.io/github/license/at-point-of-sale/ReceiptPrinterEncoder)
 
 > This library is part of [@point-of-sale](https://point-of-sale.dev), a collection of libraries for interfacing browsers and Node with Point of Sale devices such as receipt printers, barcode scanners and customer facing displays.
 

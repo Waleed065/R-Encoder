@@ -14,7 +14,8 @@ Create a set of commands that can be send to any receipt printer that supports E
 - [Handling text](text.md)
 - [Commands for creating receipts](commands.md)
 - [Printing receipts](printing.md)
-- [Migrating from version 2 to version 3](changes.md)
+- [Migrating from version 3 to version 4](changes.md)
+- [Migrating from version 2 to version 3](changes.md#migrating-from-version-2-to-version-3)
 
 <br>
 

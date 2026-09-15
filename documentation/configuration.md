@@ -14,10 +14,12 @@ Create a set of commands that can be send to any receipt printer that supports E
   - [Feed before cut](#feed-before-cut)
   - [Newline](#newline)
   - [Image mode](#image-mode)
+  - [ReceiptLine](#receiptline)
 - [Handling text](text.md)
 - [Commands for creating receipts](commands.md)
 - [Printing receipts](printing.md)
-- [Migrating from version 2 to version 3](changes.md)
+- [Migrating from version 3 to version 4](changes.md)
+- [Migrating from version 2 to version 3](changes.md#migrating-from-version-2-to-version-3)
 
 <br>
 
@@ -58,9 +60,9 @@ For example, if if your printer is a newer or older version of a model that is s
 
 Or if you are using a cheap printer without a proper brandname, you can try `pos-5890` or `pos-8360`. Many cheap printers that you can find on AliExpress or TEMU use the same internals or firmware. 
 
-<br>
-
 The cheap Bluetooth Low Energy printers that are sold as cat printers, or Meow printers, have no fonts and no barcode engine and only print images. Use the `meow` model for them. It configures the encoder for 58 mm paper with the fonts and code pages of an Epson printer, and a driver such as [WebBluetoothReceiptPrinter](https://github.com/at-point-of-sale/WebBluetoothReceiptPrinter) renders the ESC/POS commands to images with [ReceiptPrinterRenderer](https://github.com/at-point-of-sale/ReceiptPrinterRenderer) before sending them to the printer.
+
+<br>
 
 -----
 
@@ -173,3 +175,20 @@ let encoder = new ReceiptPrinterEncoder({
     imageMode: 'raster' 
 });
 ```
+
+<br>
+
+### ReceiptLine
+
+The `receiptline()` command prints documents in the receiptline markup language, but the layout of those documents is not part of this library. It lives in the `@point-of-sale/receiptline` package, which decodes the images in a document with `pngjs` in Node and with the browser's own decoder in the browser. Give the module to the encoder with the `receiptline` option and the command becomes available:
+
+```js
+import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
+import * as ReceiptLine from '@point-of-sale/receiptline';
+
+let encoder = new ReceiptPrinterEncoder({
+    receiptline: ReceiptLine
+});
+```
+
+The option takes any object with a `transform(encoder, document, options)` function that prints the document onto the encoder and returns a promise, which is what the package exports. See [the receiptline command](commands.md#receiptline).

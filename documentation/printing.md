@@ -13,7 +13,8 @@ Create a set of commands that can be send to any receipt printer that supports E
 - [Printing receipts](printing.md)
   - [Printing in the browser](#printing-in-the-browser)
   - [Printing from Node](#printing-from-node)
-- [Migrating from version 2 to version 3](changes.md)
+- [Migrating from version 3 to version 4](changes.md)
+- [Migrating from version 2 to version 3](changes.md#migrating-from-version-2-to-version-3)
 
 <br>
 
@@ -31,9 +32,9 @@ If you use a Chromium-based browser that supports APIs such as WebUSB, WebSerial
 
 Look at the following libraries:
 
-- [WebBluetoothReceiptPrinter](https://github.com/NielsLeenheer/WebBluetoothReceiptPrinter)
-- [WebSerialReceiptPrinter](https://github.com/NielsLeenheer/WebSerialReceiptPrinter)
-- [WebUSBReceiptPrinter](https://github.com/NielsLeenheer/WebUSBReceiptPrinter)
+- [WebBluetoothReceiptPrinter](https://github.com/at-point-of-sale/WebBluetoothReceiptPrinter)
+- [WebSerialReceiptPrinter](https://github.com/at-point-of-sale/WebSerialReceiptPrinter)
+- [WebUSBReceiptPrinter](https://github.com/at-point-of-sale/WebUSBReceiptPrinter)
 
 <br>
 
@@ -41,5 +42,5 @@ Look at the following libraries:
 
 If you use Node we have created the following libraries to send data to you receipt printer:
 
-- [NetworkReceiptPrinter](https://github.com/NielsLeenheer/NetworkReceiptPrinter) – use this if you want to print directly to a network printer.
-- [SystemReceiptPrinter](https://github.com/NielsLeenheer/SystemReceiptPrinter) – use this if you want to print to a printer that has been installed on your system.
+- [NetworkReceiptPrinter](https://github.com/at-point-of-sale/NetworkReceiptPrinter) – use this if you want to print directly to a network printer.
+- [SystemReceiptPrinter](https://github.com/at-point-of-sale/SystemReceiptPrinter) – use this if you want to print to a printer that has been installed on your system.
