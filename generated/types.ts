@@ -18,6 +18,7 @@ export type PrinterModel =
 	| 'epson-tm-t88vii'
 	| 'fujitsu-fp1000'
 	| 'hp-a779'
+	| 'meow'
 	| 'metapace-t1'
 	| 'mpt-ii'
 	| 'pos-5890'

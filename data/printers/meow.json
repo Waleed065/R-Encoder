@@ -1,0 +1,48 @@
+{
+    "vendor": "Meow",
+    "model": "Cat printer",
+
+    "media": {
+        "dpi": 203,
+        "width": 58
+    },
+
+    "capabilities": {
+        "language": "esc-pos",
+        "codepages": "epson",
+
+        "fonts": {
+            "A": {
+                "size": "12x24",
+                "columns": 32
+            },
+            "B": {
+                "size": "9x17",
+                "columns": 42
+            }
+        },
+
+        "barcodes": {
+            "supported": true,
+            "symbologies": [
+                "upca", "upce", "ean13", "ean8", "code39", "itf", "codabar", "code93",
+                "code128", "gs1-128", "code128-auto"
+            ]
+        },
+        "qrcode": {
+            "supported": true,
+            "models": ["1", "2"]
+        },
+        "pdf417": {
+            "supported": true
+        },
+
+        "images": {
+            "mode": "raster"
+        },
+
+        "cutter": {
+            "feed": 0
+        }
+    }
+}
