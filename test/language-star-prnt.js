@@ -203,6 +203,26 @@ describe('LanguageStarPrnt', function() {
         });
     });
 
+    describe('barcode(3130630574613, ean13, { text })', function () {
+        const mode = (text) => new ReceiptPrinterEncoder({ language: 'star-prnt', autoFlush: false })
+            .barcode('3130630574613', 'ean13', { height: 60, text }).encode()[3];
+
+        it('should send 1 for none, and for false', function () {
+            assert.equal(mode('none'), 1);
+            assert.equal(mode(false), 1);
+        });
+
+        it('should send 2 for below, and for true', function () {
+            assert.equal(mode('below'), 2);
+            assert.equal(mode(true), 2);
+        });
+
+        it('should send 2 for above and both, which Star prints below', function () {
+            assert.equal(mode('above'), 2);
+            assert.equal(mode('both'), 2);
+        });
+    });
+
     describe('barcode(CODE128, code128, 60)', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'star-prnt', autoFlush: false });
         let result = encoder.barcode('CODE128', 'code128', 60).encode();

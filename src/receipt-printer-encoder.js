@@ -101,10 +101,14 @@ import printerDefinitions from '../generated/printers.js';
  */
 
 /**
+ * @typedef {'none'|'above'|'below'|'both'} BarcodeText
+ */
+
+/**
  * @typedef {Object} BarcodeOptions
  * @property {number} [height]
  * @property {number} [width]
- * @property {boolean} [text]
+ * @property {BarcodeText|boolean} [text]  Where the human readable text goes, `true` is `below` and `false` is `none`
  */
 
 /**
@@ -2417,7 +2421,7 @@ class ReceiptPrinterEncoder {
     let options = {
       height: 60,
       width: 2,
-      text: false,
+      text: 'none',
     };
 
     if (typeof height === 'object') {
@@ -2426,6 +2430,21 @@ class ReceiptPrinterEncoder {
 
     if (typeof height === 'number') {
       options.height = height;
+    }
+
+    /* The text option names where the human readable text goes; the booleans
+       of earlier versions still work, true is below and false is none */
+
+    if (options.text === true) {
+      options.text = 'below';
+    }
+
+    if (options.text === false) {
+      options.text = 'none';
+    }
+
+    if (!['none', 'above', 'below', 'both'].includes(options.text)) {
+      throw new Error(`Barcode text must be 'none', 'above', 'below' or 'both'`);
     }
 
     if (this.#options.embedded) {

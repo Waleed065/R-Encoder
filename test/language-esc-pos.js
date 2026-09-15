@@ -230,6 +230,33 @@ describe('LanguageEscPos', function() {
         });
     });
 
+    describe('barcode(3130630574613, ean13, { text })', function () {
+        const bytes = (text) => new ReceiptPrinterEncoder({ language: 'esc-pos' })
+            .barcode('3130630574613', 'ean13', { height: 60, text }).encode();
+
+        it('should send GS H 0 for none, and for false', function () {
+            assert.deepEqual(bytes('none').subarray(6, 9), new Uint8Array([29, 72, 0]));
+            assert.deepEqual(bytes(false).subarray(6, 9), new Uint8Array([29, 72, 0]));
+        });
+
+        it('should send GS H 1 for above', function () {
+            assert.deepEqual(bytes('above').subarray(6, 9), new Uint8Array([29, 72, 1]));
+        });
+
+        it('should send GS H 2 for below, and for true', function () {
+            assert.deepEqual(bytes('below').subarray(6, 9), new Uint8Array([29, 72, 2]));
+            assert.deepEqual(bytes(true).subarray(6, 9), new Uint8Array([29, 72, 2]));
+        });
+
+        it('should send GS H 3 for both', function () {
+            assert.deepEqual(bytes('both').subarray(6, 9), new Uint8Array([29, 72, 3]));
+        });
+
+        it('should throw for anything else', function () {
+            assert.throws(() => bytes('under'), /none', 'above', 'below' or 'both'/);
+        });
+    });
+
     describe('barcode(CODE128, code128, 60)', function () {
         let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos' });
         let result = encoder.barcode('CODE128', 'code128', 60).encode();

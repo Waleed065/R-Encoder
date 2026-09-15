@@ -147,10 +147,13 @@ class LanguageStarPrnt {
         {
           type: 'barcode',
           value: {symbology: symbology, data: value, width: options.width, height: options.height, text: options.text},
+          /* Star prints the human readable text below the bars or not at all,
+             so text above the bars, or on both sides, is printed below */
+
           payload: [
             0x1b, 0x62,
             identifier,
-            options.text ? 0x02 : 0x01,
+            options.text === 'none' ? 0x01 : 0x02,
             options.width,
             options.height,
             ...bytes, 0x1e,

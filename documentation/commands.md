@@ -647,7 +647,7 @@ This function accepts an object as a third parameter for extra configuration opt
 
 - *height* - the height of the barcode in pixels, defaults to 60.
 - *width* - the width of a segment of the barcode, can be a number from 1 to 3, defaults to 2.
-- *text* - a boolean that indicates if a human readable version of the value should be printed below the barcode, defaults to false.
+- *text* - where a human readable version of the value is printed: `none`, `above`, `below` or `both`, defaults to `none`. The booleans of earlier versions still work: `true` is `below` and `false` is `none`. Star printers print the text below the barcode or not at all, so `above` and `both` print it below on them.
 
 For example to show the number of the barcode:
 

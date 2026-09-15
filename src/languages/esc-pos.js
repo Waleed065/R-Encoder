@@ -178,7 +178,7 @@ class LanguageEscPos {
           type: 'barcode',
           property: 'text',
           value: options.text,
-          payload: [0x1d, 0x48, options.text ? 0x02 : 0x00],
+          payload: [0x1d, 0x48, {none: 0x00, above: 0x01, below: 0x02, both: 0x03}[options.text]],
         },
     );
 
