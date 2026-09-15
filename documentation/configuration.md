@@ -191,4 +191,4 @@ let encoder = new ReceiptPrinterEncoder({
 });
 ```
 
-The option takes any object with a `transform(encoder, document, options)` function that prints the document onto the encoder and returns a promise, which is what the package exports. See [the receiptline command](commands.md#receiptline).
+The option takes any object with a `transform(encoder, document, options)` function that prints the document onto the encoder and returns a promise, which is what the package exports. See [the receiptline command](markup.md#receiptline).
