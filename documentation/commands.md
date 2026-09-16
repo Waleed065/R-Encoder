@@ -519,9 +519,9 @@ When running in the browser it can be an `ImageData` object, an `ImageBitmap`, o
 
 When using Node you have multiple options:
 
-- First of all, you can provide an `ImageData` object, which many libraries can export, such as `@canvas/image`, `canvas` and `image-pixels`.
+- First of all, you can provide an `ImageData` object, which many libraries can export, such as `@canvas/image`, `canvas`, `png-js` and `image-pixels`.
 
-- You can also provide raw pixel data provided by other common libraries, such as `readimage`, `sharp` and `get-pixels`.
+- You can also provide raw pixel data provided by other common libraries, such as `readimage`, `sharp`, `pngjs` and `get-pixels`.
 
 - And finally you can provide a `Canvas` or `Image` object used by the `canvas` library. However, if you provide an `Image` object the library needs to convert it to a canvas and for that you need to provide a `createCanvas` function when instantiating the encoder (In previous versions you did not need to do this, because the `canvas` library was a dependency, but in recent versions this has become an optional dependency).
 
@@ -549,6 +549,19 @@ img.onload = function() {
         .image(img, { width: 320, algorithm: 'atkinson' })
         .encode()
 }
+```
+
+Or on the web with an `ImageBitmap`, which the browser decodes for you from a `Blob`, for example the response of a `fetch()`:
+
+```js
+let encoder = new ReceiptPrinterEncoder();
+
+let response = await fetch('https://...');
+let bitmap = await createImageBitmap(await response.blob());
+
+let result = encoder
+    .image(bitmap, { width: 320, algorithm: 'atkinson' })
+    .encode();
 ```
 
 Or in Node using `sharp`:
