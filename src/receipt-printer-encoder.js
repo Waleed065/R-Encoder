@@ -2409,6 +2409,50 @@ class ReceiptPrinterEncoder {
   }
 
   /**
+     * Print a block that advances the paper by itself, such as an image, a
+     * barcode, a QR code or a PDF417 code. Blocks cannot be padded with
+     * spaces, so they are aligned with the alignment command of the printer.
+     *
+     * The block gets a line of its own, with the alignment command in front of
+     * it. The reset to left alignment is sent on the next line, after the line
+     * feed, because printers only process an alignment command at the start of
+     * a line. That line holds nothing but the reset, so it gets no line feed of
+     * its own and no empty line is printed.
+     *
+     * The alignment of the composer is not changed, the text lines that follow
+     * are padded with spaces as before.
+     *
+     * @param  {object[]}   items   The items of the block, as returned by the language
+     */
+  #block(items) {
+    /* Force printing the print buffer and moving to a new line */
+
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+
+    const align = this.#composer.align;
+
+    /* Set alignment */
+
+    if (align !== 'left') {
+      this.#composer.add(this.#language.align(align));
+    }
+
+    /* The block itself */
+
+    this.#composer.add(items);
+
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+
+    /* Reset alignment, on the line after the block */
+
+    if (align !== 'left') {
+      this.#composer.add(this.#language.align('left'));
+
+      this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    }
+  }
+
+  /**
      * Barcode
      *
      * @param  {string}                       value  the value of the barcode
@@ -2459,29 +2503,11 @@ class ReceiptPrinterEncoder {
       return this.#error(`Symbology '${symbology}' not supported by this printer`, 'relaxed');
     }
 
-    /* Force printing the print buffer and moving to a new line */
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* Barcode */
 
-    this.#composer.add(
+    this.#block(
         this.#language.barcode(value, symbology, options),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -2532,29 +2558,11 @@ class ReceiptPrinterEncoder {
       return this.#error('QR code model is not supported by this printer', 'relaxed');
     }
 
-    /* Force printing the print buffer and moving to a new line */
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* QR code */
 
-    this.#composer.add(
+    this.#block(
         this.#language.qrcode(value, options),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -2592,29 +2600,11 @@ class ReceiptPrinterEncoder {
       return this.#error('PDF417 codes are not supported by this printer', 'relaxed');
     }
 
-    /* Force printing the print buffer and moving to a new line */
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* PDF417 code */
 
-    this.#composer.add(
+    this.#block(
         this.#language.pdf417(value, options),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -2841,27 +2831,11 @@ class ReceiptPrinterEncoder {
       image = padded;
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* Encode the image data */
 
-    this.#composer.add(
+    this.#block(
         this.#language.image(image, paddedWidth, paddedHeight, this.#options.imageMode, this.#printerResolution),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
