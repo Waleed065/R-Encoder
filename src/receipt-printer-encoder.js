@@ -3040,9 +3040,15 @@ class ReceiptPrinterEncoder {
     const buffer = [];
 
     for (const fragment of fragments) {
-      this.#state.codepage = this.#codepageMapping[fragment.codepage];
+      if (this.#state.codepage != this.#codepageMapping[fragment.codepage]) {
+        this.#state.codepage = this.#codepageMapping[fragment.codepage];
+
+        buffer.push(
+            {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage])},
+        );
+      }
+
       buffer.push(
-          {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage])},
           {type: 'text', payload: [...fragment.bytes]},
       );
     }
