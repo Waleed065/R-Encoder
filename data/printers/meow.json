@@ -39,10 +39,6 @@
 
         "images": {
             "mode": "raster"
-        },
-
-        "cutter": {
-            "feed": 0
         }
     }
 }
