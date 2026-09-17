@@ -1,5 +1,12 @@
 import CodepageEncoder from '@point-of-sale/codepage-encoder';
 
+/* The maximum number of rows in a single GS v 0 command. The row count is sent
+   as a low and a high byte, but there is firmware that reads only the low byte,
+   and prints the rest of the pixel data as text and commands. Taller images are
+   split into chunks of this many rows, see #16 */
+
+const RASTER_CHUNK_HEIGHT = 255;
+
 /**
  * ESC/POS Language commands
  */
@@ -497,13 +504,13 @@ class LanguageEscPos {
       return data;
     };
 
-    const getRowData = (width, height) => {
-      const bytes = new Uint8Array((width * height) >> 3);
+    const getRowData = (width, start, rows) => {
+      const bytes = new Uint8Array((width * rows) >> 3);
 
-      for (let y = 0; y < height; y++) {
+      for (let y = 0; y < rows; y++) {
         for (let x = 0; x < width; x = x + 8) {
           for (let b = 0; b < 8; b++) {
-            bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
+            bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, start + y) << (7 - b);
           }
         }
       }
@@ -562,21 +569,28 @@ class LanguageEscPos {
     /* Encode images with GS v */
 
     if (mode == 'raster') {
-      result.push(
-          {
-            type: 'image',
-            command: 'data',
-            value: 'raster',
-            width,
-            height,
-            payload: [
-              0x1d, 0x76, 0x30, 0x00,
-              (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-              height & 0xff, ((height >> 8) & 0xff),
-              ...getRowData(width, height),
-            ],
-          },
-      );
+      /* One command per chunk of at most 255 rows. A raster command prints its
+         rows and stops, so the chunks join without a seam */
+
+      for (let start = 0; start < height; start += RASTER_CHUNK_HEIGHT) {
+        const rows = Math.min(RASTER_CHUNK_HEIGHT, height - start);
+
+        result.push(
+            {
+              type: 'image',
+              command: 'data',
+              value: 'raster',
+              width,
+              height: rows,
+              payload: [
+                0x1d, 0x76, 0x30, 0x00,
+                (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
+                rows & 0xff, ((rows >> 8) & 0xff),
+                ...getRowData(width, start, rows),
+              ],
+            },
+        );
+      }
     }
 
     return result;
