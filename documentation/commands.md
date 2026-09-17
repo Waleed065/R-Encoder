@@ -531,6 +531,7 @@ The second parameter is an object with options for the size of the image on the 
 - *height* - the height of the image on the paper in dots. The image is resized to this height.
 - *algorithm* - the dithering algorithm that is used to turn colour and grayscale images into black and white. The following algorithms are supported: `threshold`, `bayer`, `floydsteinberg` and `atkinson`. If not supplied, it will default to a simple threshold.
 - *threshold* - the threshold that will be used by the threshold and bayer dithering algorithm. It is ignored by the other algorithms. It is set to a default of 128.
+- *mode* - the ESC/POS command that is used to send this image, `column` or `raster`. It defaults to the `imageMode` option of the encoder, or the mode of the printer model. Star printers have one image command and ignore this option.
 
 You only need to specify one of `width` and `height`, the other one follows from the aspect ratio of the image. If you specify both, the image is stretched to that size. If you leave out both, the image is printed at its own size, unless it is wider than the paper, in which case it is scaled down to fit.
 
@@ -613,7 +614,7 @@ For backwards compatibility you can also pass the width, height, algorithm and t
 You can find examples for many types of image reading libraries in the `examples` directory.
 
 > [!TIP]
-> If you are trying to print an image on an ESC/POS printer and it does not work properly, you can try changing the image mode in the [configuration settings](configuration.md#image-mode). Some printers only support `raster` mode, other printers only support `column` mode.
+> If you are trying to print an image on an ESC/POS printer and it does not work properly, you can try changing the image mode in the [configuration settings](configuration.md#image-mode), or for one image with the `mode` option. Some printers only support `raster` mode, other printers only support `column` mode.
 
 <br>
 

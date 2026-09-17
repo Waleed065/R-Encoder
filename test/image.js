@@ -186,3 +186,84 @@ describe('Raster mode images', function() {
         });
     });
 });
+
+/* The mode option of image() picks the ESC/POS command for one image, and
+   overrides the imageMode option of the encoder and the mode of the profile */
+
+describe('The mode option of image()', function() {
+    const NL = [ 10, 13 ];
+    const RASTER_8 = [ 29, 118, 48, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0 ];
+    const COLUMN_8 = [ 27, 51, 24, 27, 42, 33, 8, 0, ...new Array(24).fill(0), 10, 27, 50 ];
+
+    const image = () => {
+        const data = new ImageData(8, 8);
+        data.data.fill(255);
+        return data;
+    };
+
+    describe('image(8 x 8, { mode: raster }) on an encoder in column mode', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', imageMode: 'column' });
+        let result = encoder.image(image(), { mode: 'raster' }).encode();
+
+        it('should send a raster command', function () {
+            assert.deepEqual(new Uint8Array([ ...RASTER_8, ...NL ]), result);
+        });
+    });
+
+    describe('image(8 x 8, { mode: column }) on an encoder in raster mode', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', imageMode: 'raster' });
+        let result = encoder.image(image(), { mode: 'column' }).encode();
+
+        it('should send a column command', function () {
+            assert.deepEqual(new Uint8Array([ ...COLUMN_8, ...NL ]), result);
+        });
+    });
+
+    describe('image(8 x 8, { mode: column }) on an Epson TM-T70, raster mode by profile', function () {
+        let encoder = new ReceiptPrinterEncoder({ printerModel: 'epson-tm-t70' });
+        let result = encoder.image(image(), { mode: 'column' }).encode();
+
+        it('should send a column command, with the motion unit of the profile', function () {
+            assert.deepEqual(new Uint8Array([
+                29, 80, 180, 180, 27, 51, 24, 27, 42, 33, 8, 0, ...new Array(24).fill(0), 10, 27, 50, 29, 80, 0, 0, ...NL,
+            ]), result);
+        });
+    });
+
+    describe('image(8 x 8, { width: 8 }) without a mode', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', imageMode: 'raster' });
+        let result = encoder.image(image(), { width: 8 }).encode();
+
+        it('should use the imageMode option of the encoder', function () {
+            assert.deepEqual(new Uint8Array([ ...RASTER_8, ...NL ]), result);
+        });
+    });
+
+    describe('image(8 x 8, 8, 8) with the separate parameters', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', imageMode: 'raster' });
+        let result = encoder.image(image(), 8, 8).encode();
+
+        it('should use the imageMode option of the encoder', function () {
+            assert.deepEqual(new Uint8Array([ ...RASTER_8, ...NL ]), result);
+        });
+    });
+
+    describe('image(8 x 8, { mode: bitmap })', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos' });
+
+        it('should throw', function () {
+            assert.throws(() => encoder.image(image(), { mode: 'bitmap' }), 'Image mode must be column or raster');
+        });
+    });
+
+    describe('image(8 x 24, { mode: raster }) on StarPRNT', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'star-prnt', autoFlush: false });
+        let tall = new ImageData(8, 24);
+        tall.data.fill(255);
+        let result = encoder.image(tall, { mode: 'raster' }).encode();
+
+        it('should ignore the option and send the Star image command', function () {
+            assert.deepEqual(new Uint8Array([ 27, 48, 27, 88, 8, 0, ...new Array(24).fill(0), 10, 13, 27, 122, 1, ...NL ]), result);
+        });
+    });
+});

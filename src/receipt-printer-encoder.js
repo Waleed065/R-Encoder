@@ -134,6 +134,7 @@ import printerDefinitions from '../generated/printers.js';
  * @property {number} [height]     Height of the image on the paper in dots
  * @property {DitherAlgorithm} [algorithm]
  * @property {number} [threshold]
+ * @property {'column' | 'raster'} [mode]  The ESC/POS image command for this image, instead of imageMode
  */
 
 /** @typedef {Object} SharpInput */
@@ -2636,6 +2637,8 @@ class ReceiptPrinterEncoder {
      *                                          - height: the height in dots, if left out it follows from the width
      *                                          - algorithm: the dithering algorithm, defaults to threshold
      *                                          - threshold: threshold for the dithering algorithm, defaults to 128
+     *                                          - mode: column or raster, the ESC/POS image command for this
+     *                                            image, defaults to the imageMode option of the encoder
      *                                          Without a width and height the image is printed at its own size,
      *                                          scaled down when it is wider than the paper. Sizes are rounded up
      *                                          to a multiple of 8 dots, the extra dots are white.
@@ -2651,6 +2654,7 @@ class ReceiptPrinterEncoder {
       height: undefined,
       algorithm: 'threshold',
       threshold: 128,
+      mode: this.#options.imageMode,
     };
 
     if (typeof width === 'object' && width !== null) {
@@ -2681,6 +2685,10 @@ class ReceiptPrinterEncoder {
       if (typeof options[dimension] !== 'undefined' && (!Number.isInteger(options[dimension]) || options[dimension] < 1)) {
         throw new Error(`Image ${dimension} must be a positive integer`);
       }
+    }
+
+    if (options.mode !== 'column' && options.mode !== 'raster') {
+      throw new Error('Image mode must be column or raster');
     }
 
     /* Determine the type of the input */
@@ -2834,7 +2842,7 @@ class ReceiptPrinterEncoder {
     /* Encode the image data */
 
     this.#block(
-        this.#language.image(image, paddedWidth, paddedHeight, this.#options.imageMode, this.#printerResolution),
+        this.#language.image(image, paddedWidth, paddedHeight, options.mode, this.#printerResolution),
     );
 
     return this;

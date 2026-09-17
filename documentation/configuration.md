@@ -176,6 +176,8 @@ let encoder = new ReceiptPrinterEncoder({
 });
 ```
 
+The option sets the mode for every image. To send one image in the other mode, use the `mode` option of the [image command](commands.md#image).
+
 <br>
 
 ### ReceiptLine
