@@ -3151,6 +3151,12 @@ class ReceiptPrinterEncoder {
           buffer.push(...this.#encodeText(item.value, item.codepage));
         } else if (item.type === 'style') {
           buffer.push(Object.assign(item, {payload: this.#encodeStyle(item.property, item.value)}));
+        } else if (item.type === 'raw') {
+          /* Raw bytes may have changed the code page of the printer, so the
+             next text sends the code page command again */
+
+          this.#state.codepage = -1;
+          buffer.push(item);
         } else if (item.value || item.payload) {
           buffer.push(item);
         }

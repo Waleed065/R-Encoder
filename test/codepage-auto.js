@@ -144,6 +144,44 @@ describe('Automatic code page selection', function() {
         });
     });
 
+    describe('codepage(auto) with raw() between two lines', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
+        let result = encoder
+            .initialize()
+            .codepage('auto')
+            .line('héllo')
+            .raw([ 27, 116, 5 ])
+            .line('wörld')
+            .encode();
+
+        it('should send the code page command again after the raw bytes', function () {
+            assert.deepEqual(new Uint8Array([
+                ...INITIALIZE,
+                ...CP437, ...HELLO, ...NL,
+                27, 116, 5, ...CP437, ...WORLD, ...NL,
+            ]), result);
+        });
+    });
+
+    describe('codepage(cp437) with raw() between two lines', function () {
+        let encoder = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32 });
+        let result = encoder
+            .initialize()
+            .codepage('cp437')
+            .line('héllo')
+            .raw([ 27, 116, 5 ])
+            .line('wörld')
+            .encode();
+
+        it('should send the code page command again after the raw bytes, like the automatic mode', function () {
+            assert.deepEqual(new Uint8Array([
+                ...INITIALIZE,
+                ...CP437, ...HELLO, ...NL,
+                27, 116, 5, ...CP437, ...WORLD, ...NL,
+            ]), result);
+        });
+    });
+
     describe('StarPRNT', function () {
         const STAR_INITIALIZE = [ 27, 64, 24 ];
         const STAR_STANDARD = [ 27, 29, 116, 0 ];
