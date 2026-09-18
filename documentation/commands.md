@@ -614,7 +614,7 @@ For backwards compatibility you can also pass the width, height, algorithm and t
 You can find examples for many types of image reading libraries in the `examples` directory.
 
 > [!TIP]
-> If you are trying to print an image on an ESC/POS printer and it does not work properly, you can try changing the image mode in the [configuration settings](configuration.md#image-mode), or for one image with the `mode` option. Some printers only support `raster` mode, other printers only support `column` mode.
+> If you are trying to print an image on an ESC/POS printer and it does not work properly, you can try changing the image mode in the [configuration settings](configuration.md#image-mode), or for one image with the `mode` option. Some printers only support `raster` mode, other printers only support `column` mode. Raster images taller than 255 dots are sent in several commands, for printers that read only the low byte of the row count.
 
 <br>
 
@@ -671,3 +671,5 @@ let result = encoder
 ```     
 
 Please be aware that raw printer commands are language specific. Depending on the language your printer supports you may need to send different commands.
+
+The encoder does not know what the raw bytes do to the printer, so after `raw()` it sends the code page command again before the next text.

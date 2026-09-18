@@ -20,6 +20,7 @@ Create a set of commands that can be send to any receipt printer that supports E
   - [Fewer and different bytes](#fewer-and-different-bytes)
   - [Stricter validation](#stricter-validation)
   - [New in version 4](#new-in-version-4)
+  - [Version 4.0.1](#version-401)
 - [Migrating from version 2 to version 3](#migrating-from-version-2-to-version-3)
   - [New name](#new-name)
   - [Standalone](#standalone)
@@ -129,6 +130,15 @@ A row of a table has to be an array of cells, or a rule row, which is an object 
 - Printer definitions for the SUNMI built-in printers and their codepage mapping, and for the Bluetooth cat printers, which print through [ReceiptPrinterRenderer](https://github.com/at-point-of-sale/ReceiptPrinterRenderer).
 - TypeScript declarations are bundled with the package.
 - The width of double width characters is calculated correctly when a line mixes sizes, and the font lookup no longer throws for printer models without a size for a font.
+
+<br>
+
+### Version 4.0.1
+
+- With `codepage('auto')` a code page command is sent only when the page changes. Version 4.0.0 sent one before every line and every fragment, also when the printer was already on that page. Nothing changes on paper, the output is shorter. After `raw()` the code page command is sent again before the next text, in automatic and in explicit mode, because the encoder cannot know what the raw bytes did to the printer.
+- Raster images are sent in commands of at most 255 rows. Some printers read only the low byte of the row count of the raster command and print the rest of a taller image as text. Images of 248 rows or fewer are sent as before.
+- The reset of the alignment after an image, barcode, QR code or PDF417 code is sent after the line feed of the block instead of before it, because printers process an alignment command only at the start of a line, and some drop it otherwise. With `feedAfterBlock: false` there is no line feed and the order is as before.
+- `image()` takes a `mode` option, `column` or `raster`, which picks the ESC/POS image command for that image instead of the `imageMode` option of the encoder.
 
 <br>
 
