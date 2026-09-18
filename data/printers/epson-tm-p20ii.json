@@ -52,10 +52,6 @@
         
         "images": {
             "mode": "raster"
-        },
-        
-        "cutter": {
-            "feed": 3
         }
     }
 }
