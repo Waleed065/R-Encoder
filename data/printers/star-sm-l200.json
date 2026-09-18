@@ -29,7 +29,7 @@
         "barcodes": {
             "supported": true,
             "symbologies": [
-                "upca", "upce", "ean13", "ean8", "itf", "codabar", "code93", 
+                "upca", "upce", "ean13", "ean8", "code39", "itf", "codabar", "code93", 
                 "code128"
             ]
         },
