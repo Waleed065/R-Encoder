@@ -81,6 +81,7 @@ type ImageOptions = {
     height?: number | undefined;
     algorithm?: DitherAlgorithm | undefined;
     threshold?: number | undefined;
+    mode?: "column" | "raster" | undefined;
 };
 type SharpInput = Object;
 type NdarrayInput = Object;

@@ -4,6 +4,13 @@ import CodepageEncoder from '@point-of-sale/codepage-encoder';
 import ImageData from '@canvas/image-data';
 import resizeImageData from 'resize-image-data';
 
+/* The maximum number of rows in a single GS v 0 command. The row count is sent
+   as a low and a high byte, but there is firmware that reads only the low byte,
+   and prints the rest of the pixel data as text and commands. Taller images are
+   split into chunks of this many rows, see #16 */
+
+const RASTER_CHUNK_HEIGHT = 255;
+
 /**
  * ESC/POS Language commands
  */
@@ -501,13 +508,13 @@ class LanguageEscPos {
       return data;
     };
 
-    const getRowData = (width, height) => {
-      const bytes = new Uint8Array((width * height) >> 3);
+    const getRowData = (width, start, rows) => {
+      const bytes = new Uint8Array((width * rows) >> 3);
 
-      for (let y = 0; y < height; y++) {
+      for (let y = 0; y < rows; y++) {
         for (let x = 0; x < width; x = x + 8) {
           for (let b = 0; b < 8; b++) {
-            bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, y) << (7 - b);
+            bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, start + y) << (7 - b);
           }
         }
       }
@@ -566,21 +573,28 @@ class LanguageEscPos {
     /* Encode images with GS v */
 
     if (mode == 'raster') {
-      result.push(
-          {
-            type: 'image',
-            command: 'data',
-            value: 'raster',
-            width,
-            height,
-            payload: [
-              0x1d, 0x76, 0x30, 0x00,
-              (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-              height & 0xff, ((height >> 8) & 0xff),
-              ...getRowData(width, height),
-            ],
-          },
-      );
+      /* One command per chunk of at most 255 rows. A raster command prints its
+         rows and stops, so the chunks join without a seam */
+
+      for (let start = 0; start < height; start += RASTER_CHUNK_HEIGHT) {
+        const rows = Math.min(RASTER_CHUNK_HEIGHT, height - start);
+
+        result.push(
+            {
+              type: 'image',
+              command: 'data',
+              value: 'raster',
+              width,
+              height: rows,
+              payload: [
+                0x1d, 0x76, 0x30, 0x00,
+                (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
+                rows & 0xff, ((rows >> 8) & 0xff),
+                ...getRowData(width, start, rows),
+              ],
+            },
+        );
+      }
     }
 
     return result;
@@ -3468,7 +3482,7 @@ class Markdown {
 const codepageMappings = {
 	'esc-pos': {
 		'bixolon/legacy': ['cp437','epson/katakana','cp850','cp860','cp863','cp865',,,,,,,,,,,,,,'cp858'],
-		'bixolon': ['cp437','epson/katakana','cp850','cp860','cp863','cp865',,,,,,,,,,,'windows1252','cp866','cp852','cp858',,'cp862','cp864','thai42','windows1253','windows1254','windows1257',,'windows1251','cp737','cp775','thai14','bixolon/hebrew','windows1255','thai11','thai18','cp885','cp857','iso8859-7','thai16','windows1256','windows1258','khmer',,,,'bixolon/cp866','windows1250',,'tcvn3','tcvn3capitals','viscii'],
+		'bixolon': ['cp437','epson/katakana','cp850','cp860','cp863','cp865',,,,,,,,,,,'windows1252','cp866','cp852','cp858',,'cp862','cp864','thai42','windows1253','windows1254','windows1257',,'windows1251','cp737','cp775','thai14','bixolon/hebrew','windows1255','thai11','thai18','cp855','cp857','iso8859-7','thai16','windows1256','windows1258','khmer',,,,'bixolon/cp866','windows1250',,'tcvn3','tcvn3capitals','viscii'],
 		'citizen': ['cp437','epson/katakana','cp858','cp860','cp863','cp865','cp852','cp866','cp857',,,,,,,,'windows1252',,,,,'thai11',,,,,'thai13',,,,'tcvn3','tcvn3capitals','windows1258',,,,,,,,'cp864'],
 		'epson/legacy': ['cp437','epson/katakana','cp850','cp860','cp863','cp865',,,,,,,,,,,'windows1252','cp866','cp852','cp858'],
 		'epson': ['cp437','epson/katakana','cp850','cp860','cp863','cp865',,,,,,'cp851','cp853','cp857','cp737','iso8859-7','windows1252','cp866','cp852','cp858','thai42','thai11',,,,,'thai13',,,,'tcvn3','tcvn3capitals','cp720','cp775','cp855','cp861','cp862','cp864','cp869','epson/iso8859-2','iso8859-15','cp1098','cp774','cp772','cp1125','windows1250','windows1251','windows1253','windows1254','windows1255','windows1256','windows1257','windows1258','rk1048'],
@@ -3493,32 +3507,32 @@ codepageMappings['esc-pos']['zijang'] = codepageMappings['esc-pos']['pos-5890'];
 
 const printerDefinitions = {
 	'bixolon-srp350': {vendor:'Bixolon',model:'SRP-350',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'bixolon/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4}}},
-	'bixolon-srp350iii': {vendor:'Bixolon',model:'SRP-350III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'bixolon',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56},C:{size:'9x24',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'bixolon-srp350iii': {vendor:'Bixolon',model:'SRP-350III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'bixolon',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56},C:{size:'9x24',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
 	'citizen-ct-s310ii': {vendor:'Citizen',model:'CT-S310II',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'citizen',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64},C:{size:'8x16',columns:72}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'epson-tm-m30ii': {vendor:'Epson',model:'TM-m30II',interfaces:{usb:{productName:'TM-m30II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-m30iii': {vendor:'Epson',model:'TM-m30III',interfaces:{usb:{productName:'TM-m30III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-p20ii': {vendor:'Epson',model:'TM-P20II',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42},D:{size:'10x24',columns:38},E:{size:'8x16',columns:48}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:3}}},
-	'epson-tm-t20ii': {vendor:'Epson',model:'TM-T20II',interfaces:{usb:{productName:'TM-T20II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t20iii': {vendor:'Epson',model:'TM-T20III',interfaces:{usb:{productName:'TM-T20III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t20iv': {vendor:'Epson',model:'TM-T20IV',interfaces:{usb:{productName:'TM-T20IV'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-m30ii': {vendor:'Epson',model:'TM-m30II',interfaces:{usb:{productName:'TM-m30II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-m30iii': {vendor:'Epson',model:'TM-m30III',interfaces:{usb:{productName:'TM-m30III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'10x24',columns:57},C:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-p20ii': {vendor:'Epson',model:'TM-P20II',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42},D:{size:'10x24',columns:38},E:{size:'8x16',columns:48}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'}}},
+	'epson-tm-t20ii': {vendor:'Epson',model:'TM-T20II',interfaces:{usb:{productName:'TM-T20II'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-t20iii': {vendor:'Epson',model:'TM-T20III',interfaces:{usb:{productName:'TM-T20III'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-t20iv': {vendor:'Epson',model:'TM-T20IV',interfaces:{usb:{productName:'TM-T20IV'}},media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
 	'epson-tm-t70': {vendor:'Epson',model:'TM-T70',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:4}}},
-	'epson-tm-t70ii': {vendor:'Epson',model:'TM-T70II','interface':{usb:{productName:'TM-T70II'}},media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:4}}},
-	'epson-tm-t88ii': {vendor:'Epson',model:'TM-T88II',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88iii': {vendor:'Epson',model:'TM-T88III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-t70ii': {vendor:'Epson',model:'TM-T70II','interface':{usb:{productName:'TM-T70II'}},media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:4}}},
+	'epson-tm-t88ii': {vendor:'Epson',model:'TM-T88II',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4}}},
+	'epson-tm-t88iii': {vendor:'Epson',model:'TM-T88III',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4}}},
 	'epson-tm-t88iv': {vendor:'Epson',model:'TM-T88IV',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson/legacy',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88v': {vendor:'Epson',model:'TM-T88V',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88vi': {vendor:'Epson',model:'TM-T88VI',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
-	'epson-tm-t88vii': {vendor:'Epson',model:'TM-T88VII',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-t88v': {vendor:'Epson',model:'TM-T88V',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-t88vi': {vendor:'Epson',model:'TM-T88VI',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
+	'epson-tm-t88vii': {vendor:'Epson',model:'TM-T88VII',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:4}}},
 	'fujitsu-fp1000': {vendor:'Fujitsu',model:'FP-1000',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'fujitsu',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:56},C:{size:'8x16',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:false},cutter:{feed:4}}},
 	'hp-a779': {vendor:'HP',model:'A779',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'hp',newline:'\n',fonts:{A:{size:'12x24',columns:44}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:false,fallback:{type:'barcode',symbology:75}},cutter:{feed:4}}},
-	'meow': {vendor:'Meow',model:'Cat printer',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:32},B:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:0}}},
+	'meow': {vendor:'Meow',model:'Cat printer',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'epson',fonts:{A:{size:'12x24',columns:32},B:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','code128-auto']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},images:{mode:'raster'}}},
 	'metapace-t1': {vendor:'Metapace',model:'T-1',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'metapace',fonts:{A:{size:'12x24',columns:42},B:{size:'9x17',columns:56}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:4}}},
 	'mpt-ii': {vendor:'',model:'MPT-II',media:{dpi:180,width:80},capabilities:{language:'esc-pos',codepages:'mpt',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64},C:{size:'0x0',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:[]},pdf417:{supported:false}}},
-	'pos-5890': {vendor:'',model:'POS-5890',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'pos-5890',fonts:{A:{size:'12x24',columns:32},B:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:1}}},
+	'pos-5890': {vendor:'',model:'POS-5890',media:{dpi:203,width:58},capabilities:{language:'esc-pos',codepages:'pos-5890',fonts:{A:{size:'12x24',columns:32},B:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{mode:'raster'}}},
 	'pos-8360': {vendor:'',model:'POS-8360',media:{dpi:203,width:80},capabilities:{language:'esc-pos',codepages:'pos-8360',fonts:{A:{size:'12x24',columns:48},B:{size:'9x17',columns:64}},barcodes:{supported:true,symbologies:['upca','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true},images:{mode:'raster'},cutter:{feed:4}}},
-	'star-mc-print2': {vendor:'Star',model:'mC-Print2',interfaces:{usb:{productName:'mC-Print2'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'star-mpop': {vendor:'Star',model:'mPOP',interfaces:{usb:{productName:'mPOP'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
-	'star-sm-l200': {vendor:'Star',model:'SM-L200',media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true}}},
+	'star-mc-print2': {vendor:'Star',model:'mC-Print2',interfaces:{usb:{productName:'mC-Print2'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
+	'star-mpop': {vendor:'Star',model:'mPOP',interfaces:{usb:{productName:'mPOP'}},media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
+	'star-sm-l200': {vendor:'Star',model:'SM-L200',media:{dpi:203,width:58},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:32},B:{size:'9x24',columns:42},C:{size:'9x17',columns:42}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['2']},pdf417:{supported:true}}},
 	'star-tsp100iii': {vendor:'Star',model:'TSP100III',media:{dpi:203,width:80},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
 	'star-tsp100iv': {vendor:'Star',model:'TSP100IV',media:{dpi:203,width:80},capabilities:{language:'star-prnt',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128','gs1-128','gs1-databar-omni','gs1-databar-truncated','gs1-databar-limited','gs1-databar-expanded']},qrcode:{supported:true,models:['1','2']},pdf417:{supported:true},cutter:{feed:3}}},
 	'star-tsp650': {vendor:'Star',model:'TSP650',media:{dpi:203,width:80},capabilities:{language:'star-line',codepages:'star',fonts:{A:{size:'12x24',columns:48},B:{size:'9x24',columns:64}},barcodes:{supported:true,symbologies:['upca','upce','ean13','ean8','code39','itf','codabar','code93','code128']},qrcode:{supported:false,models:[]},pdf417:{supported:false},cutter:{feed:3}}},
@@ -3649,6 +3663,7 @@ const printerDefinitions = {
  * @property {number} [height]     Height of the image on the paper in dots
  * @property {DitherAlgorithm} [algorithm]
  * @property {number} [threshold]
+ * @property {'column' | 'raster'} [mode]  The ESC/POS image command for this image, instead of imageMode
  */
 
 /** @typedef {Object} SharpInput */
@@ -5924,6 +5939,50 @@ class ReceiptPrinterEncoder {
   }
 
   /**
+     * Print a block that advances the paper by itself, such as an image, a
+     * barcode, a QR code or a PDF417 code. Blocks cannot be padded with
+     * spaces, so they are aligned with the alignment command of the printer.
+     *
+     * The block gets a line of its own, with the alignment command in front of
+     * it. The reset to left alignment is sent on the next line, after the line
+     * feed, because printers only process an alignment command at the start of
+     * a line. That line holds nothing but the reset, so it gets no line feed of
+     * its own and no empty line is printed.
+     *
+     * The alignment of the composer is not changed, the text lines that follow
+     * are padded with spaces as before.
+     *
+     * @param  {object[]}   items   The items of the block, as returned by the language
+     */
+  #block(items) {
+    /* Force printing the print buffer and moving to a new line */
+
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+
+    const align = this.#composer.align;
+
+    /* Set alignment */
+
+    if (align !== 'left') {
+      this.#composer.add(this.#language.align(align));
+    }
+
+    /* The block itself */
+
+    this.#composer.add(items);
+
+    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+
+    /* Reset alignment, on the line after the block */
+
+    if (align !== 'left') {
+      this.#composer.add(this.#language.align('left'));
+
+      this.#composer.flush({forceFlush: true, ignoreAlignment: true});
+    }
+  }
+
+  /**
      * Barcode
      *
      * @param  {string}                       value  the value of the barcode
@@ -5974,29 +6033,11 @@ class ReceiptPrinterEncoder {
       return this.#error(`Symbology '${symbology}' not supported by this printer`, 'relaxed');
     }
 
-    /* Force printing the print buffer and moving to a new line */
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* Barcode */
 
-    this.#composer.add(
+    this.#block(
         this.#language.barcode(value, symbology, options),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -6047,29 +6088,11 @@ class ReceiptPrinterEncoder {
       return this.#error('QR code model is not supported by this printer', 'relaxed');
     }
 
-    /* Force printing the print buffer and moving to a new line */
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* QR code */
 
-    this.#composer.add(
+    this.#block(
         this.#language.qrcode(value, options),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -6107,29 +6130,11 @@ class ReceiptPrinterEncoder {
       return this.#error('PDF417 codes are not supported by this printer', 'relaxed');
     }
 
-    /* Force printing the print buffer and moving to a new line */
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* PDF417 code */
 
-    this.#composer.add(
+    this.#block(
         this.#language.pdf417(value, options),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -6161,6 +6166,8 @@ class ReceiptPrinterEncoder {
      *                                          - height: the height in dots, if left out it follows from the width
      *                                          - algorithm: the dithering algorithm, defaults to threshold
      *                                          - threshold: threshold for the dithering algorithm, defaults to 128
+     *                                          - mode: column or raster, the ESC/POS image command for this
+     *                                            image, defaults to the imageMode option of the encoder
      *                                          Without a width and height the image is printed at its own size,
      *                                          scaled down when it is wider than the paper. Sizes are rounded up
      *                                          to a multiple of 8 dots, the extra dots are white.
@@ -6176,6 +6183,7 @@ class ReceiptPrinterEncoder {
       height: undefined,
       algorithm: 'threshold',
       threshold: 128,
+      mode: this.#options.imageMode,
     };
 
     if (typeof width === 'object' && width !== null) {
@@ -6206,6 +6214,10 @@ class ReceiptPrinterEncoder {
       if (typeof options[dimension] !== 'undefined' && (!Number.isInteger(options[dimension]) || options[dimension] < 1)) {
         throw new Error(`Image ${dimension} must be a positive integer`);
       }
+    }
+
+    if (options.mode !== 'column' && options.mode !== 'raster') {
+      throw new Error('Image mode must be column or raster');
     }
 
     /* Determine the type of the input */
@@ -6356,27 +6368,11 @@ class ReceiptPrinterEncoder {
       image = padded;
     }
 
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
-
-    /* Set alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align(this.#composer.align));
-    }
-
     /* Encode the image data */
 
-    this.#composer.add(
-        this.#language.image(image, paddedWidth, paddedHeight, this.#options.imageMode, this.#printerResolution),
+    this.#block(
+        this.#language.image(image, paddedWidth, paddedHeight, options.mode, this.#printerResolution),
     );
-
-    /* Reset alignment */
-
-    if (this.#composer.align !== 'left') {
-      this.#composer.add(this.#language.align('left'));
-    }
-
-    this.#composer.flush({forceFlush: true, ignoreAlignment: true});
 
     return this;
   }
@@ -6555,9 +6551,15 @@ class ReceiptPrinterEncoder {
     const buffer = [];
 
     for (const fragment of fragments) {
-      this.#state.codepage = this.#codepageMapping[fragment.codepage];
+      if (this.#state.codepage != this.#codepageMapping[fragment.codepage]) {
+        this.#state.codepage = this.#codepageMapping[fragment.codepage];
+
+        buffer.push(
+            {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage])},
+        );
+      }
+
       buffer.push(
-          {type: 'codepage', payload: this.#language.codepage(this.#codepageMapping[fragment.codepage])},
           {type: 'text', payload: [...fragment.bytes]},
       );
     }
@@ -6678,6 +6680,12 @@ class ReceiptPrinterEncoder {
           buffer.push(...this.#encodeText(item.value, item.codepage));
         } else if (item.type === 'style') {
           buffer.push(Object.assign(item, {payload: this.#encodeStyle(item.property, item.value)}));
+        } else if (item.type === 'raw') {
+          /* Raw bytes may have changed the code page of the printer, so the
+             next text sends the code page command again */
+
+          this.#state.codepage = -1;
+          buffer.push(item);
         } else if (item.value || item.payload) {
           buffer.push(item);
         }
