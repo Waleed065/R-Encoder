@@ -38,10 +38,6 @@
         
         "images": {
             "mode": "raster"
-        },
-        
-        "cutter": {
-            "feed": 1
         }
     }
 }
