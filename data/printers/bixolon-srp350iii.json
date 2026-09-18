@@ -35,7 +35,7 @@
         },
         "qrcode": {
             "supported": true,
-            "models": ["2"]
+            "models": ["1", "2"]
         },
         "pdf417": {
             "supported": true
