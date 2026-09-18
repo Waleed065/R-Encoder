@@ -29,11 +29,11 @@
             ]
         },
         "qrcode": {
-            "supported": true,
-            "models": ["1", "2"]
+            "supported": false,
+            "models": []
         },
         "pdf417": {
-            "supported": true
+            "supported": false
         },
         
         "cutter": {
