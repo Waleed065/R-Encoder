@@ -3,6 +3,7 @@ import Flatten from 'canvas-flatten';
 import CodepageEncoder from '@point-of-sale/codepage-encoder';
 import ImageData from '@canvas/image-data';
 import resizeImageData from 'resize-image-data';
+import {thresholdAsync, yieldToEventLoop} from './async-image.js';
 
 /* Import local dependencies */
 
@@ -2649,6 +2650,71 @@ class ReceiptPrinterEncoder {
      *
      */
   image(input, width, height, algorithm, threshold) {
+    const source = this.#prepareSource(input, width, height, algorithm, threshold);
+    const prepared = this.#finishImage(source);
+
+    this.#block(
+        this.#language.image(prepared.image, prepared.width, prepared.height, prepared.mode, this.#printerResolution),
+    );
+
+    return this;
+  }
+
+  /**
+     * Image, without blocking the thread for large images
+     *
+     * The same as image(), but a raster image is encoded one chunk of rows at
+     * a time and the thread is given back to the event loop between chunks.
+     * A tall image, such as a raster receipt or report, can take a long time
+     * to convert, and this keeps the user interface responsive. The bytes
+     * that are printed are exactly the same as those of image().
+     *
+     * @param  {ImageInput}  input   The image input
+     * @param  {ImageOptions|number}  [width]   The image options, or the width of the image on the paper in dots
+     * @param  {number}  [height]   Height of the image on the paper in dots
+     * @param  {DitherAlgorithm}  [algorithm]   The dithering algorithm for making the image black and white
+     * @param  {number}  [threshold]   Threshold for the dithering algorithm
+     * @return {Promise<ReceiptPrinterEncoder>}   A promise that resolves to the encoder, for easy chaining commands
+     *
+     */
+  async imageAsync(input, width, height, algorithm, threshold) {
+    /* Let pending work in the event loop run before the conversion starts */
+
+    await yieldToEventLoop();
+
+    const source = this.#prepareSource(input, width, height, algorithm, threshold);
+    const prepared = await this.#finishImageAsync(source);
+
+    /* Languages without an asynchronous image encoder fall back to the
+       synchronous one */
+
+    const commands = typeof this.#language.imageAsync === 'function' ?
+        await this.#language.imageAsync(
+            prepared.image, prepared.width, prepared.height, prepared.mode, this.#printerResolution) :
+        this.#language.image(prepared.image, prepared.width, prepared.height, prepared.mode, this.#printerResolution);
+
+    this.#block(commands);
+
+    return this;
+  }
+
+  /**
+     * Turn an image input into an ImageData at the requested size
+     *
+     * Shared by image() and imageAsync(): parses the options, determines the
+     * type and the size of the input, converts it to ImageData and resizes it.
+     * Flattening, dithering and padding happen in #finishImage() or in
+     * #finishImageAsync()
+     *
+     * @param  {ImageInput}  input   The image input
+     * @param  {ImageOptions|number}  [width]   The image options, or the width of the image on the paper in dots
+     * @param  {number}  [height]   Height of the image on the paper in dots
+     * @param  {DitherAlgorithm}  [algorithm]   The dithering algorithm for making the image black and white
+     * @param  {number}  [threshold]   Threshold for the dithering algorithm
+     * @return {object}   The source: the ImageData, the size it prints at, the algorithm and the threshold
+     *
+     */
+  #prepareSource(input, width, height, algorithm, threshold) {
     let options = {
       width: undefined,
       height: undefined,
@@ -2815,37 +2881,90 @@ class ReceiptPrinterEncoder {
       throw new Error('Image could not be resized');
     }
 
-    /* Flatten the image and dither it */
+    return {image, width, height, paddedWidth, paddedHeight, algorithm, threshold, mode: options.mode};
+  }
 
-    image = Flatten.flatten(image, [0xff, 0xff, 0xff]);
+  /**
+     * Flatten, dither and pad a prepared source image
+     *
+     * @param  {object}  source   The source, as returned by #prepareSource()
+     * @return {object}   The prepared ImageData and the padded size
+     *
+     */
+  #finishImage(source) {
+    let image = Flatten.flatten(source.image, [0xff, 0xff, 0xff]);
 
-    switch (algorithm) {
-      case 'threshold': image = Dither.threshold(image, threshold); break;
-      case 'bayer': image = Dither.bayer(image, threshold); break;
+    switch (source.algorithm) {
+      case 'threshold': image = Dither.threshold(image, source.threshold); break;
+      case 'bayer': image = Dither.bayer(image, source.threshold); break;
       case 'floydsteinberg': image = Dither.floydsteinberg(image); break;
       case 'atkinson': image = Dither.atkinson(image); break;
     }
 
-    /* Pad the image to a multiple of 8 dots */
+    return this.#padImage(image, source);
+  }
 
-    if (paddedWidth !== width || paddedHeight !== height) {
-      const padded = new ImageData(paddedWidth, paddedHeight);
+  /**
+     * The same as #finishImage(), but without blocking the thread
+     *
+     * The thread is given back to the event loop around the conversion steps,
+     * and the threshold dither, which is the default and the only algorithm
+     * that gives the same result when it is split up, is done in bands with a
+     * yield between them. The bytes that come out are the same as those of
+     * #finishImage()
+     *
+     * @param  {object}  source   The source, as returned by #prepareSource()
+     * @return {Promise<object>}   Promise of the prepared ImageData and the padded size
+     *
+     */
+  async #finishImageAsync(source) {
+    /* Let pending work in the event loop run before the conversion below */
+
+    await yieldToEventLoop();
+
+    let image = Flatten.flatten(source.image, [0xff, 0xff, 0xff]);
+
+    /* The other dithers diffuse the error of a pixel into its neighbours, so
+       they cannot be split into bands without changing the result */
+
+    if (source.algorithm === 'threshold') {
+      image = await thresholdAsync(image, source.threshold);
+    } else {
+      await yieldToEventLoop();
+
+      switch (source.algorithm) {
+        case 'bayer': image = Dither.bayer(image, source.threshold); break;
+        case 'floydsteinberg': image = Dither.floydsteinberg(image); break;
+        case 'atkinson': image = Dither.atkinson(image); break;
+      }
+    }
+
+    return this.#padImage(image, source);
+  }
+
+  /**
+     * Pad an image to a multiple of 8 dots with white
+     *
+     * @param  {object}  image    The ImageData to pad
+     * @param  {object}  source   The source, as returned by #prepareSource()
+     * @return {object}   The prepared ImageData and the padded size
+     *
+     */
+  #padImage(image, source) {
+    if (source.paddedWidth !== source.width || source.paddedHeight !== source.height) {
+      const padded = new ImageData(source.paddedWidth, source.paddedHeight);
       padded.data.fill(255);
 
-      for (let y = 0; y < height; y++) {
-        padded.data.set(image.data.subarray(y * width * 4, (y + 1) * width * 4), y * paddedWidth * 4);
+      for (let y = 0; y < source.height; y++) {
+        const row = image.data.subarray(y * source.width * 4, (y + 1) * source.width * 4);
+
+        padded.data.set(row, y * source.paddedWidth * 4);
       }
 
       image = padded;
     }
 
-    /* Encode the image data */
-
-    this.#block(
-        this.#language.image(image, paddedWidth, paddedHeight, options.mode, this.#printerResolution),
-    );
-
-    return this;
+    return {image, width: source.paddedWidth, height: source.paddedHeight, mode: source.mode};
   }
 
   /**
@@ -3169,14 +3288,23 @@ class ReceiptPrinterEncoder {
       return lines;
     }
 
-    /* Build the array */
+    /* Build the array. The payloads are appended as they are, a Uint8Array
+       payload, such as one holding a chunk of a raster image, is copied with
+       set() in one go instead of being spread into an array of numbers,
+       which would box every byte of a tall image */
 
-    let result = [];
+    const parts = [];
+    let total = 0;
     let last = null;
+
+    const append = (payload) => {
+      parts.push(payload);
+      total += payload.length;
+    };
 
     for (let i = 0; i < lines.length; i++) {
       for (const item of lines[i]) {
-        result.push(...item.payload);
+        append(item.payload);
         last = item;
       }
 
@@ -3196,21 +3324,35 @@ class ReceiptPrinterEncoder {
       }
 
       if (this.#options.newline === '\n\r') {
-        result.push(0x0a, 0x0d);
+        append([0x0a, 0x0d]);
       }
 
       if (this.#options.newline === '\n') {
-        result.push(0x0a);
+        append([0x0a]);
+      }
+    }
+
+    const result = new Uint8Array(total);
+    let offset = 0;
+
+    for (const part of parts) {
+      if (part instanceof Uint8Array) {
+        result.set(part, offset);
+        offset += part.length;
+      } else {
+        for (let i = 0; i < part.length; i++) {
+          result[offset++] = part[i];
+        }
       }
     }
 
     /* If the last command is a pulse, do not feed */
 
     if (last && last.type === 'pulse') {
-      result = result.slice(0, 0 - this.#options.newline.length);
+      return result.slice(0, result.length - this.#options.newline.length);
     }
 
-    return Uint8Array.from(result);
+    return result;
   }
 
   /**

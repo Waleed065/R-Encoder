@@ -169,6 +169,7 @@ declare class ReceiptPrinterEncoder {
     pdf417(value: string, options?: PDF417Options): ReceiptPrinterEncoder;
     image(input: ImageInput, options?: ImageOptions | undefined): ReceiptPrinterEncoder;
     image(input: ImageInput, width: number, height: number, algorithm?: DitherAlgorithm | undefined, threshold?: number | undefined): ReceiptPrinterEncoder;
+    imageAsync(input: ImageInput, width?: ImageOptions | number, height?: number, algorithm?: DitherAlgorithm, threshold?: number): Promise<ReceiptPrinterEncoder>;
     cut(value?: CutType): ReceiptPrinterEncoder;
     pulse(device?: number, on?: number, off?: number): ReceiptPrinterEncoder;
     raw(data: number[] | Uint8Array): ReceiptPrinterEncoder;

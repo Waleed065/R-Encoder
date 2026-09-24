@@ -611,6 +611,21 @@ let result = encoder
 
 For backwards compatibility you can also pass the width, height, algorithm and threshold as separate parameters: `image(image, 64, 64, 'atkinson', 128)`.
 
+For images that take a long time to convert, such as a tall raster receipt or a
+raster report, there is `imageAsync()`. It prints exactly the same bytes as
+`image()`, but gives the thread back to the event loop between the steps of the
+conversion, so that the user interface stays responsive:
+
+```js
+let encoder = new ReceiptPrinterEncoder();
+
+await encoder.imageAsync(image, { width: 320, algorithm: 'atkinson' });
+
+let result = encoder
+    .line('Printed below the image')
+    .encode();
+```
+
 You can find examples for many types of image reading libraries in the `examples` directory.
 
 > [!TIP]

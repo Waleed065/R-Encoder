@@ -1,4 +1,5 @@
 import CodepageEncoder from '@point-of-sale/codepage-encoder';
+import {now, yieldToEventLoop, YIELD_INTERVAL_MS} from '../async-image.js';
 
 /* The maximum number of rows in a single GS v 0 command. The row count is sent
    as a low and a high byte, but there is firmware that reads only the low byte,
@@ -6,6 +7,48 @@ import CodepageEncoder from '@point-of-sale/codepage-encoder';
    split into chunks of this many rows, see #16 */
 
 const RASTER_CHUNK_HEIGHT = 255;
+
+/* Read one pixel as a raster bit: a black dot is 1, a white or transparent
+   dot is 0. The image is dithered before it gets here, so every pixel is
+   either black or white and the red channel tells them apart */
+
+const getRasterPixel = (image, width, height, x, y) =>
+  x < width && y < height ? (image.data[((width * y) + x) * 4] > 0 ? 0 : 1) : 0;
+
+/* Build the payload of one GS v 0 raster command: the eight byte header
+   followed by the packed rows. The rows are packed straight into a single
+   Uint8Array instead of being spread into an array of numbers, so that a tall
+   image does not make a boxed copy of every byte on the way to the printer */
+
+const buildRasterChunk = (image, width, height, start, rows) => {
+  const widthBytes = width >> 3;
+  const payload = new Uint8Array(8 + (widthBytes * rows));
+
+  payload[0] = 0x1d;
+  payload[1] = 0x76;
+  payload[2] = 0x30;
+  payload[3] = 0x00;
+  payload[4] = widthBytes & 0xff;
+  payload[5] = (widthBytes >> 8) & 0xff;
+  payload[6] = rows & 0xff;
+  payload[7] = (rows >> 8) & 0xff;
+
+  let offset = 8;
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < width; x = x + 8) {
+      let byte = 0;
+
+      for (let b = 0; b < 8; b++) {
+        byte |= getRasterPixel(image, width, height, x + b, start + y) << (7 - b);
+      }
+
+      payload[offset++] = byte;
+    }
+  }
+
+  return payload;
+};
 
 /**
  * ESC/POS Language commands
@@ -482,7 +525,7 @@ class LanguageEscPos {
   image(image, width, height, mode, dpi) {
     const result = [];
 
-    const getPixel = (x, y) => x < width && y < height ? (image.data[((width * y) + x) * 4] > 0 ? 0 : 1) : 0;
+    const getPixel = (x, y) => getRasterPixel(image, width, height, x, y);
 
     const getColumnData = (width, height) => {
       const data = [];
@@ -502,20 +545,6 @@ class LanguageEscPos {
       }
 
       return data;
-    };
-
-    const getRowData = (width, start, rows) => {
-      const bytes = new Uint8Array((width * rows) >> 3);
-
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < width; x = x + 8) {
-          for (let b = 0; b < 8; b++) {
-            bytes[(y * (width >> 3)) + (x >> 3)] |= getPixel(x + b, start + y) << (7 - b);
-          }
-        }
-      }
-
-      return bytes;
     };
 
     /* Encode images with ESC * */
@@ -582,14 +611,62 @@ class LanguageEscPos {
               value: 'raster',
               width,
               height: rows,
-              payload: [
-                0x1d, 0x76, 0x30, 0x00,
-                (width >> 3) & 0xff, (((width >> 3) >> 8) & 0xff),
-                rows & 0xff, ((rows >> 8) & 0xff),
-                ...getRowData(width, start, rows),
-              ],
+              payload: buildRasterChunk(image, width, height, start, rows),
             },
         );
+      }
+    }
+
+    return result;
+  }
+
+  /**
+     * Encode an image without blocking the thread for large images
+     *
+     * The same as image(), but a raster image is encoded one chunk of at most
+     * 255 rows at a time and the thread is given back to the event loop
+     * between chunks. A tall image, which can take a long time to convert,
+     * then does not block the user interface. The bytes that are returned are
+     * exactly the same as those of image().
+     *
+     * Other modes have no chunks to yield between and are encoded by image()
+     * itself.
+     *
+     * @param {ImageData} image     ImageData object
+     * @param {number} width        Width of the image
+     * @param {number} height       Height of the image
+     * @param {string} mode         Image encoding mode ('column' or 'raster')
+     * @param {number} [dpi]        Resolution of the printer in dots per inch, if known
+     * @return {Promise<Array>}     Promise of the array of bytes to send to the printer
+     */
+  async imageAsync(image, width, height, mode, dpi) {
+    if (mode != 'raster') {
+      return this.image(image, width, height, mode, dpi);
+    }
+
+    const result = [];
+    let lastYield = now();
+
+    for (let start = 0; start < height; start += RASTER_CHUNK_HEIGHT) {
+      const rows = Math.min(RASTER_CHUNK_HEIGHT, height - start);
+
+      result.push(
+          {
+            type: 'image',
+            command: 'data',
+            value: 'raster',
+            width,
+            height: rows,
+            payload: buildRasterChunk(image, width, height, start, rows),
+          },
+      );
+
+      /* Give the thread back to the event loop when enough time has passed
+         since the previous chunk, but not after the last one */
+
+      if (start + rows < height && now() - lastYield >= YIELD_INTERVAL_MS) {
+        await yieldToEventLoop();
+        lastYield = now();
       }
     }
 
