@@ -15,9 +15,11 @@ var resizeImageData = require('resize-image-data');
 
 const YIELD_INTERVAL_MS = 12;
 
-/* Rows per band when dithering asynchronously */
+/* Rows per band for the asynchronous image steps: the copy of the pixel
+   buffer, the flatten and the threshold dither are all done this many rows at
+   a time, with a yield between bands */
 
-const THRESHOLD_BAND_ROWS = 64;
+const BAND_ROWS = 64;
 
 /* The current time, as a number of milliseconds */
 
@@ -50,8 +52,8 @@ async function thresholdAsync(image, threshold) {
   const stride = image.width * 4;
   let lastYield = now();
 
-  for (let start = 0; start < image.height; start += THRESHOLD_BAND_ROWS) {
-    const rows = Math.min(THRESHOLD_BAND_ROWS, image.height - start);
+  for (let start = 0; start < image.height; start += BAND_ROWS) {
+    const rows = Math.min(BAND_ROWS, image.height - start);
     const end = (start + rows) * stride;
 
     for (let i = start * stride; i < end; i += 4) {
@@ -62,6 +64,82 @@ async function thresholdAsync(image, threshold) {
       data[i + 1] = value;
       data[i + 2] = value;
     }
+
+    if (start + rows < image.height && now() - lastYield >= YIELD_INTERVAL_MS) {
+      await yieldToEventLoop();
+      lastYield = now();
+    }
+  }
+
+  return image;
+}
+
+/**
+ * Flatten a whole image on a solid background, in bands
+ *
+ * Gives the same result as the flatten of canvas-flatten, which the
+ * synchronous pipeline uses: every pixel is composited with the same formula
+ * and the alpha channel is set to opaque. The image is handled in bands, with
+ * a yield between them
+ *
+ * @param  {object}  image        ImageData object, changed in place
+ * @param  {number[]}  background   Three values with the r, g and b of the background
+ * @return {Promise<object>}      Promise of the flattened image
+ *
+ */
+async function flattenAsync(image, background) {
+  const data = image.data;
+  const stride = image.width * 4;
+  let lastYield = now();
+
+  for (let start = 0; start < image.height; start += BAND_ROWS) {
+    const rows = Math.min(BAND_ROWS, image.height - start);
+    const end = (start + rows) * stride;
+
+    for (let i = start * stride; i < end; i += 4) {
+      const alpha = data[i + 3];
+      const invAlpha = 255 - alpha;
+
+      data[i] = (alpha * data[i] + invAlpha * background[0]) / 255;
+      data[i + 1] = (alpha * data[i + 1] + invAlpha * background[1]) / 255;
+      data[i + 2] = (alpha * data[i + 2] + invAlpha * background[2]) / 255;
+      data[i + 3] = 0xff;
+    }
+
+    if (start + rows < image.height && now() - lastYield >= YIELD_INTERVAL_MS) {
+      await yieldToEventLoop();
+      lastYield = now();
+    }
+  }
+
+  return image;
+}
+
+/**
+ * Copy a pixel buffer into an ImageData, in bands
+ *
+ * The same result as a single set() with the whole buffer, but a large buffer
+ * is copied a band of rows at a time with a yield between bands, so that the
+ * copy of a tall image does not block the thread. Typed buffers are copied
+ * through a subarray view, plain arrays through a slice
+ *
+ * @param  {object}  image   ImageData object, changed in place
+ * @param  {ArrayLike<number>}  from   The pixel data to copy
+ * @return {Promise<object>}   Promise of the image
+ *
+ */
+async function copyAsync(image, from) {
+  const data = image.data;
+  const stride = image.width * 4;
+  let lastYield = now();
+
+  for (let start = 0; start < image.height; start += BAND_ROWS) {
+    const rows = Math.min(BAND_ROWS, image.height - start);
+    const begin = start * stride;
+    const end = (start + rows) * stride;
+    const band = typeof from.subarray === 'function' ? from.subarray(begin, end) : from.slice(begin, end);
+
+    data.set(band, begin);
 
     if (start + rows < image.height && now() - lastYield >= YIELD_INTERVAL_MS) {
       await yieldToEventLoop();
@@ -6354,7 +6432,7 @@ class ReceiptPrinterEncoder {
 
     await yieldToEventLoop();
 
-    const source = this.#prepareSource(input, width, height, algorithm, threshold);
+    const source = this.#prepareSource(input, width, height, algorithm, threshold, true);
     const prepared = await this.#finishImageAsync(source);
 
     /* Languages without an asynchronous image encoder fall back to the
@@ -6383,10 +6461,11 @@ class ReceiptPrinterEncoder {
      * @param  {number}  [height]   Height of the image on the paper in dots
      * @param  {DitherAlgorithm}  [algorithm]   The dithering algorithm for making the image black and white
      * @param  {number}  [threshold]   Threshold for the dithering algorithm
+     * @param  {boolean}  [deferCopy]   Leave the copy of the pixel data for the caller, used by the asynchronous path
      * @return {object}   The source: the ImageData, the size it prints at, the algorithm and the threshold
      *
      */
-  #prepareSource(input, width, height, algorithm, threshold) {
+  #prepareSource(input, width, height, algorithm, threshold, deferCopy = false) {
     let options = {
       width: undefined,
       height: undefined,
@@ -6487,6 +6566,7 @@ class ReceiptPrinterEncoder {
     /* Turn provided data into an ImageData object */
 
     let image;
+    let copyFrom = null;
 
     if (type == 'element') {
       const canvas = document.createElement('canvas');
@@ -6515,22 +6595,22 @@ class ReceiptPrinterEncoder {
 
     if (type == 'node-read-image') {
       image = new ImageData(input.width, input.height);
-      image.data.set(input.frames[0].data);
+      copyFrom = input.frames[0].data;
     }
 
     if (type == 'node-sharp') {
       image = new ImageData(input.info.width, input.info.height);
-      image.data.set(input.data);
+      copyFrom = input.data;
     }
 
     if (type == 'ndarray') {
       image = new ImageData(input.shape[0], input.shape[1]);
-      image.data.set(input.data);
+      copyFrom = input.data;
     }
 
     if (type == 'object') {
       image = new ImageData(input.width, input.height);
-      image.data.set(input.data);
+      copyFrom = input.data;
     }
 
     if (type == 'imagedata') {
@@ -6539,6 +6619,16 @@ class ReceiptPrinterEncoder {
 
     if (!image) {
       throw new Error('Image could not be loaded');
+    }
+
+    /* Copy the pixel data. A large buffer is copied in bands by imageAsync(),
+       but a resize below needs the pixels in place */
+
+    if (copyFrom) {
+      if (!deferCopy || width !== image.width || height !== image.height) {
+        image.data.set(copyFrom);
+        copyFrom = null;
+      }
     }
 
     /* Resize image */
@@ -6553,7 +6643,7 @@ class ReceiptPrinterEncoder {
       throw new Error('Image could not be resized');
     }
 
-    return {image, width, height, paddedWidth, paddedHeight, algorithm, threshold, mode: options.mode};
+    return {image, width, height, paddedWidth, paddedHeight, algorithm, threshold, mode: options.mode, copyFrom};
   }
 
   /**
@@ -6579,11 +6669,11 @@ class ReceiptPrinterEncoder {
   /**
      * The same as #finishImage(), but without blocking the thread
      *
-     * The thread is given back to the event loop around the conversion steps,
-     * and the threshold dither, which is the default and the only algorithm
-     * that gives the same result when it is split up, is done in bands with a
-     * yield between them. The bytes that come out are the same as those of
-     * #finishImage()
+     * The thread is given back to the event loop around the conversion steps:
+     * the copy of a large pixel buffer, the flatten and the threshold dither,
+     * which is the default and the only dither that gives the same result
+     * when it is split up, are done in bands with a yield between them. The
+     * bytes that come out are the same as those of #finishImage()
      *
      * @param  {object}  source   The source, as returned by #prepareSource()
      * @return {Promise<object>}   Promise of the prepared ImageData and the padded size
@@ -6594,7 +6684,13 @@ class ReceiptPrinterEncoder {
 
     await yieldToEventLoop();
 
-    let image = Flatten.flatten(source.image, [0xff, 0xff, 0xff]);
+    /* A large pixel buffer is copied in bands, instead of in one go */
+
+    if (source.copyFrom) {
+      await copyAsync(source.image, source.copyFrom);
+    }
+
+    let image = await flattenAsync(source.image, [0xff, 0xff, 0xff]);
 
     /* The other dithers diffuse the error of a pixel into its neighbours, so
        they cannot be split into bands without changing the result */
@@ -6611,7 +6707,42 @@ class ReceiptPrinterEncoder {
       }
     }
 
-    return this.#padImage(image, source);
+    return this.#padImageAsync(image, source);
+  }
+
+  /**
+     * The same as #padImage(), but for the asynchronous path
+     *
+     * The rows are copied in bands, with a yield between them, so that the
+     * padding of a tall image does not block the thread
+     *
+     * @param  {object}  image    The ImageData to pad
+     * @param  {object}  source   The source, as returned by #prepareSource()
+     * @return {Promise<object>}   Promise of the prepared ImageData and the padded size
+     *
+     */
+  async #padImageAsync(image, source) {
+    if (source.paddedWidth !== source.width || source.paddedHeight !== source.height) {
+      const padded = new ImageData(source.paddedWidth, source.paddedHeight);
+      padded.data.fill(255);
+
+      let lastYield = now();
+
+      for (let y = 0; y < source.height; y++) {
+        const row = image.data.subarray(y * source.width * 4, (y + 1) * source.width * 4);
+
+        padded.data.set(row, y * source.paddedWidth * 4);
+
+        if (y + 1 < source.height && now() - lastYield >= YIELD_INTERVAL_MS) {
+          await yieldToEventLoop();
+          lastYield = now();
+        }
+      }
+
+      image = padded;
+    }
+
+    return {image, width: source.paddedWidth, height: source.paddedHeight, mode: source.mode};
   }
 
   /**

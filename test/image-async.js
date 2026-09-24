@@ -1,7 +1,8 @@
 import ReceiptPrinterEncoder from '../src/receipt-printer-encoder.js';
 import ImageData from '@canvas/image-data';
 import Dither from 'canvas-dither';
-import { thresholdAsync } from '../src/async-image.js';
+import Flatten from 'canvas-flatten';
+import {copyAsync, flattenAsync, thresholdAsync} from '../src/async-image.js';
 import { assert } from 'chai';
 
 /* imageAsync() encodes exactly the same bytes as image(). It only gives the
@@ -160,6 +161,80 @@ describe('imageAsync()', function () {
 
                 assert.deepEqual(Array.from(expected.data), Array.from(actual.data));
             }
+        });
+    });
+
+    describe('the asynchronous flatten', function () {
+        it('should match the flatten of canvas-flatten on random images', async function () {
+            for (let round = 0; round < 50; round++) {
+                const width = 1 + Math.floor(Math.random() * 40);
+                const height = 1 + Math.floor(Math.random() * 40);
+
+                const expected = new ImageData(width, height);
+                const actual = new ImageData(width, height);
+
+                for (let i = 0; i < expected.data.length; i++) {
+                    const value = Math.floor(Math.random() * 256);
+
+                    expected.data[i] = value;
+                    actual.data[i] = value;
+                }
+
+                Flatten.flatten(expected, [ 0xff, 0xff, 0xff ]);
+                await flattenAsync(actual, [ 0xff, 0xff, 0xff ]);
+
+                assert.deepEqual(Array.from(expected.data), Array.from(actual.data));
+            }
+        });
+    });
+
+    describe('the asynchronous copy', function () {
+        it('should copy typed and plain pixel buffers in bands', async function () {
+            const typed = new Uint8ClampedArray(24 * 9 * 4);
+
+            for (let i = 0; i < typed.length; i++) {
+                typed[i] = (i * 7) % 256;
+            }
+
+            const plain = Array.from(typed);
+
+            for (const source of [ typed, plain ]) {
+                const image = new ImageData(24, 9);
+
+                await copyAsync(image, source);
+
+                assert.deepEqual(Array.from(image.data), Array.from(typed));
+            }
+        });
+    });
+
+    describe('a plain object input, as the app sends it', function () {
+        it('should encode the same bytes as image()', async function () {
+            const data = new Array(64 * 600 * 4);
+
+            for (let i = 0; i < data.length; i++) {
+                data[i] = (i * 7) % 256;
+            }
+
+            const syncEncoder = new ReceiptPrinterEncoder(options);
+            syncEncoder.image({data, width: 64, height: 600}, {width: 64});
+
+            const asyncEncoder = new ReceiptPrinterEncoder(options);
+            await asyncEncoder.imageAsync({data, width: 64, height: 600}, {width: 64});
+
+            assert.deepEqual(syncEncoder.encode(), asyncEncoder.encode());
+        });
+    });
+
+    describe('a size that needs padding to a multiple of 8', function () {
+        it('should encode the same bytes as image()', async function () {
+            const syncEncoder = new ReceiptPrinterEncoder(options);
+            syncEncoder.image(pattern(new ImageData(61, 37)), { width: 61, height: 37 });
+
+            const asyncEncoder = new ReceiptPrinterEncoder(options);
+            await asyncEncoder.imageAsync(pattern(new ImageData(61, 37)), { width: 61, height: 37 });
+
+            assert.deepEqual(syncEncoder.encode(), asyncEncoder.encode());
         });
     });
 });
