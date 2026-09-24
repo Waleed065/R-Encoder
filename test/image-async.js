@@ -1,4 +1,5 @@
 import ReceiptPrinterEncoder from '../src/receipt-printer-encoder.js';
+import LanguageStarPrnt from '../src/languages/star-prnt.js';
 import ImageData from '@canvas/image-data';
 import Dither from 'canvas-dither';
 import Flatten from 'canvas-flatten';
@@ -112,18 +113,87 @@ describe('imageAsync()', function () {
         });
     });
 
-    describe('a language without an asynchronous image encoder', function () {
-        it('should fall back to the synchronous encoding of star-prnt', async function () {
-            const image = pattern(new ImageData(64, 128));
-            const star = { language: 'star-prnt', columns: 48 };
+    describe('the star-prnt language', function () {
+        const star = { language: 'star-prnt', columns: 48 };
 
-            const sync = new ReceiptPrinterEncoder(star);
-            sync.image(image, { width: 64 });
+        const encodeStarSync = (image, options) => {
+            const encoder = new ReceiptPrinterEncoder(options);
 
-            const asyncEncoder = new ReceiptPrinterEncoder(star);
-            await asyncEncoder.imageAsync(image, { width: 64 });
+            encoder.image(image, { width: 64 });
 
-            assert.deepEqual(sync.encode(), asyncEncoder.encode());
+            return encoder.encode();
+        };
+
+        const encodeStarAsync = async (image, options) => {
+            const encoder = new ReceiptPrinterEncoder(options);
+
+            await encoder.imageAsync(image, { width: 64 });
+
+            return encoder.encode();
+        };
+
+        it('should have its own asynchronous image encoder', function () {
+            assert.isFunction(LanguageStarPrnt.prototype.imageAsync);
+        });
+
+        it('should encode the same bytes as image()', async function () {
+            const image = pattern(new ImageData(64, 600));
+
+            assert.deepEqual(encodeStarSync(image, star), await encodeStarAsync(image, star));
+        });
+
+        it('should encode the same bytes as image() for a height that is not a multiple of 24', async function () {
+            const image = pattern(new ImageData(64, 100));
+
+            assert.deepEqual(encodeStarSync(image, star), await encodeStarAsync(image, star));
+        });
+
+        it('should encode the same bytes as image() for the star-line alias', async function () {
+            const image = pattern(new ImageData(64, 600));
+            const starline = { language: 'star-line', columns: 48 };
+
+            assert.deepEqual(encodeStarSync(image, starline), await encodeStarAsync(image, starline));
+        });
+
+        it('should send the image in bands of 24 rows', async function () {
+            const encoder = new ReceiptPrinterEncoder(star);
+
+            await encoder.imageAsync(pattern(new ImageData(64, 600)), { width: 64 });
+
+            const items = encoder.commands()
+                .flatMap((line) => line.commands)
+                .filter((item) => item.type === 'image' && item.property === 'data');
+
+            assert.equal(items.length, 25);
+            assert.isTrue(items.every((item) => item.height === 24));
+
+            /* Each band is the four byte header followed by the packed
+               columns, three bytes for every column, and the two bytes that
+               end the command */
+
+            assert.isTrue(items.every((item) => item.payload.length === 4 + (64 * 3) + 2));
+        });
+
+        it('should give the event loop a turn during a tall image', async function () {
+            const encoder = new ReceiptPrinterEncoder(star);
+            let finished = false;
+
+            const pending = encoder.imageAsync(pattern(new ImageData(64, 600)), { width: 64 })
+                .then(() => {
+                    finished = true;
+                });
+
+            /* The encoding always gives the thread back at least once, so a
+               callback that is scheduled right after it starts runs before
+               it finishes */
+
+            await new Promise((resolve) => setImmediate(resolve));
+
+            assert.isFalse(finished);
+
+            await pending;
+
+            assert.isTrue(finished);
         });
     });
 

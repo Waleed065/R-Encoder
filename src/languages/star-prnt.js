@@ -1,4 +1,68 @@
 import CodepageEncoder from '@point-of-sale/codepage-encoder';
+import {now, yieldToEventLoop, YIELD_INTERVAL_MS} from '../async-image.js';
+
+/* Read one pixel as a print bit: a black dot is 1, a white or transparent
+   dot is 0. The image is dithered before it gets here, so every pixel is
+   black or white already; pixels outside the image are white */
+
+const getColumnPixel = (image, width, x, y) => typeof image.data[((width * y) + x) * 4] === 'undefined' ||
+                                               image.data[((width * y) + x) * 4] > 0 ? 0 : 1;
+
+/* Build one band of a column image: the two byte header of the ESC 0x58
+   command, the 24 rows of the band packed into three bytes for every
+   column, and the line feed and carriage return that end the command */
+
+const buildColumnBand = (getPixel, width, y) => {
+  const bytes = new Uint8Array(width * 3);
+
+  for (let x = 0; x < width; x++) {
+    const i = x * 3;
+
+    bytes[i] =
+                getPixel(x, y + 0) << 7 |
+                getPixel(x, y + 1) << 6 |
+                getPixel(x, y + 2) << 5 |
+                getPixel(x, y + 3) << 4 |
+                getPixel(x, y + 4) << 3 |
+                getPixel(x, y + 5) << 2 |
+                getPixel(x, y + 6) << 1 |
+                getPixel(x, y + 7);
+
+    bytes[i + 1] =
+                getPixel(x, y + 8) << 7 |
+                getPixel(x, y + 9) << 6 |
+                getPixel(x, y + 10) << 5 |
+                getPixel(x, y + 11) << 4 |
+                getPixel(x, y + 12) << 3 |
+                getPixel(x, y + 13) << 2 |
+                getPixel(x, y + 14) << 1 |
+                getPixel(x, y + 15);
+
+    bytes[i + 2] =
+                getPixel(x, y + 16) << 7 |
+                getPixel(x, y + 17) << 6 |
+                getPixel(x, y + 18) << 5 |
+                getPixel(x, y + 19) << 4 |
+                getPixel(x, y + 20) << 3 |
+                getPixel(x, y + 21) << 2 |
+                getPixel(x, y + 22) << 1 |
+                getPixel(x, y + 23);
+  }
+
+  return {
+    type: 'image',
+    property: 'data',
+    value: 'column',
+    width,
+    height: 24,
+    payload: [
+      0x1b, 0x58,
+      width & 0xff, (width >> 8) & 0xff,
+      ...bytes,
+      0x0a, 0x0d,
+    ],
+  };
+};
 
 /**
  * StarPRNT Language commands
@@ -399,64 +463,56 @@ class LanguageStarPrnt {
   image(image, width, height, mode) {
     const result = [];
 
-    const getPixel = (x, y) => typeof image.data[((width * y) + x) * 4] === 'undefined' ||
-                                      image.data[((width * y) + x) * 4] > 0 ? 0 : 1;
+    const getPixel = (x, y) => getColumnPixel(image, width, x, y);
 
     result.push(...this.lineSpacing('none'));
 
     for (let s = 0; s < height / 24; s++) {
-      const y = s * 24;
-      const bytes = new Uint8Array(width * 3);
+      result.push(buildColumnBand(getPixel, width, s * 24));
+    }
 
-      for (let x = 0; x < width; x++) {
-        const i = x * 3;
+    result.push(...this.lineSpacing('default'));
 
-        bytes[i] =
-                    getPixel(x, y + 0) << 7 |
-                    getPixel(x, y + 1) << 6 |
-                    getPixel(x, y + 2) << 5 |
-                    getPixel(x, y + 3) << 4 |
-                    getPixel(x, y + 4) << 3 |
-                    getPixel(x, y + 5) << 2 |
-                    getPixel(x, y + 6) << 1 |
-                    getPixel(x, y + 7);
+    return result;
+  }
 
-        bytes[i + 1] =
-                    getPixel(x, y + 8) << 7 |
-                    getPixel(x, y + 9) << 6 |
-                    getPixel(x, y + 10) << 5 |
-                    getPixel(x, y + 11) << 4 |
-                    getPixel(x, y + 12) << 3 |
-                    getPixel(x, y + 13) << 2 |
-                    getPixel(x, y + 14) << 1 |
-                    getPixel(x, y + 15);
+  /**
+     * Encode an image without blocking the thread for large images
+     *
+     * The same as image(), but the image is encoded one band of 24 rows at a
+     * time and the thread is given back to the event loop between the bands,
+     * so that a tall image does not block the user interface while it is
+     * converted. StarPRNT has only a single column based image format, so
+     * unlike the ESC/POS implementation there is no mode to take into
+     * account; the bytes that are returned are exactly the same as those of
+     * image().
+     *
+     * @param {ImageData} image     ImageData object
+     * @param {number} width        Width of the image
+     * @param {number} height       Height of the image
+     * @param {string} mode         Image encoding mode (value is ignored)
+     * @param {number} [dpi]        Resolution of the printer in dots per inch, if known (value is ignored)
+     * @return {Promise<Array>}     Promise of the array of bytes to send to the printer
+     */
+  async imageAsync(image, width, height, mode, dpi) {
+    const result = [];
 
-        bytes[i + 2] =
-                    getPixel(x, y + 16) << 7 |
-                    getPixel(x, y + 17) << 6 |
-                    getPixel(x, y + 18) << 5 |
-                    getPixel(x, y + 19) << 4 |
-                    getPixel(x, y + 20) << 3 |
-                    getPixel(x, y + 21) << 2 |
-                    getPixel(x, y + 22) << 1 |
-                    getPixel(x, y + 23);
+    const getPixel = (x, y) => getColumnPixel(image, width, x, y);
+
+    result.push(...this.lineSpacing('none'));
+
+    let lastYield = now();
+
+    for (let s = 0; s < height / 24; s++) {
+      result.push(buildColumnBand(getPixel, width, s * 24));
+
+      /* Give the thread back to the event loop when enough time has passed
+         since the previous band, but not after the last one */
+
+      if ((s + 1) * 24 < height && now() - lastYield >= YIELD_INTERVAL_MS) {
+        await yieldToEventLoop();
+        lastYield = now();
       }
-
-      result.push(
-          {
-            type: 'image',
-            property: 'data',
-            value: 'column',
-            width,
-            height: 24,
-            payload: [
-              0x1b, 0x58,
-              width & 0xff, (width >> 8) & 0xff,
-              ...bytes,
-              0x0a, 0x0d,
-            ],
-          },
-      );
     }
 
     result.push(...this.lineSpacing('default'));
