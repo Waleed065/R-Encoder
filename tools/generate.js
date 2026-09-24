@@ -32,6 +32,7 @@ function generatePrinters() {
     }
     catch (err) {
         console.error(err);
+        throw err;
     }
 
     output += '};\n\n';
@@ -54,7 +55,10 @@ function generateMappings() {
         let files = fs.readdirSync('data/mappings/esc-pos');
 
         for (let file of files) {
-            let data = fs.readFileSync('data/mappings/esc-pos/' + file, 'utf8');
+            /* Strip the carriage returns, so that the parser gives the same
+               result on Windows as on the systems where the data was made */
+
+            let data = fs.readFileSync('data/mappings/esc-pos/' + file, 'utf8').replace(/\r/g, '');
             let lines = data.split("\n");
 
             let name = file.replace(/\.txt$/, '').replace(/-legacy/g, '\/legacy');
@@ -63,6 +67,11 @@ function generateMappings() {
             for (let line of lines) {
                 if (line.length > 1 && line.charAt(0) != '#') {
                     let [ skip, key, value ] = line.split(/\t/);
+
+                    if (typeof value === 'undefined') {
+                        throw new Error(`Invalid mapping line in ${file}: ${line}`);
+                    }
+
                     list.set(parseInt(key, 16), value.trim());
                 }
             }
@@ -80,6 +89,7 @@ function generateMappings() {
     }
     catch (err) {
         console.error(err);
+        throw err;
     }
 
     try {
@@ -88,7 +98,10 @@ function generateMappings() {
         let files = fs.readdirSync('data/mappings/star-prnt');
 
         for (let file of files) {
-            let data = fs.readFileSync('data/mappings/star-prnt/' + file, 'utf8');
+            /* Strip the carriage returns, so that the parser gives the same
+               result on Windows as on the systems where the data was made */
+
+            let data = fs.readFileSync('data/mappings/star-prnt/' + file, 'utf8').replace(/\r/g, '');
             let lines = data.split("\n");
 
             let name = file.replace(/\.txt$/, '').replace(/-legacy/g, '\/legacy');
@@ -97,6 +110,11 @@ function generateMappings() {
             for (let line of lines) {
                 if (line.length > 1 && line.charAt(0) != '#') {
                     let [ skip, key, value ] = line.split(/\t/);
+
+                    if (typeof value === 'undefined') {
+                        throw new Error(`Invalid mapping line in ${file}: ${line}`);
+                    }
+
                     list.set(parseInt(key, 16), value.trim());
                 }
             }
@@ -114,6 +132,7 @@ function generateMappings() {
     }
     catch (err) {
         console.error(err);
+        throw err;
     }
 
     output += '};\n\n';
@@ -140,6 +159,7 @@ function generateTypes() {
     }
     catch (err) {
         console.error(err);
+        throw err;
     }
 
     /* Generate CodepageMappingName type from codepage mappings */
@@ -165,6 +185,7 @@ function generateTypes() {
     }
     catch (err) {
         console.error(err);
+        throw err;
     }
 
     fs.writeFileSync('generated/types.ts', output, 'utf8');
